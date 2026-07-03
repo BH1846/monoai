@@ -1,0 +1,6 @@
+[submodule "Lite_Multimodel_switching"]
+	path = Lite_Multimodel_switching
+	url = https://github.com/BH1846/Lite_Multimodel_switching.git
+[submodule "SENTINEL-2.0"]
+	path = SENTINEL-2.0
+	url = https://github.com/R-A-H-U-L-Kodez/SENTINEL-2.0.git

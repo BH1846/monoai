@@ -1,0 +1,6 @@
+services:
+  valkey:
+    image: valkey/valkey:latest
+    ports:
+      - "6380:6379"
+    command: ["--requirepass", "${VALKEY_PASSWORD:-changeme}"]
