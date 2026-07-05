@@ -20,6 +20,12 @@ _SECRET_PATTERNS = [
 
 _ALLOWED_FILES = {".env.example", "test_repo_hygiene.py"}
 
+# tests/ legitimately contains fake secret-shaped fixtures (e.g. a synthetic
+# AWS-key-shaped string to exercise the secrets detector) -- those aren't
+# real committed secrets. CI's gitleaks job is the real, smarter gate;
+# this is just a fast local net over docs/config, not test fixtures.
+_EXCLUDED_DIRS = {"tests"}
+
 
 def _tracked_files() -> list[str]:
     out = subprocess.run(
@@ -32,6 +38,8 @@ def test_no_secrets_in_tracked_files() -> None:
     offenders: list[str] = []
     for rel_path in _tracked_files():
         if Path(rel_path).name in _ALLOWED_FILES:
+            continue
+        if Path(rel_path).parts and Path(rel_path).parts[0] in _EXCLUDED_DIRS:
             continue
         full_path = REPO_ROOT / rel_path
         if not full_path.is_file():

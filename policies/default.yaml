@@ -1,0 +1,40 @@
+policy_id: default
+description: "MonoAI Gateway 2.0 baseline policy"
+
+detectors:
+  packs: ["base_en"]
+  min_global_confidence: 0.0
+
+rules:
+  EMAIL:        { action: REVERSIBLE }
+  PHONE:        { action: REVERSIBLE }
+  IP_ADDRESS:   { action: REVERSIBLE }
+  DATE_TIME:    { action: REVERSIBLE }
+  USERNAME:     { action: REVERSIBLE }
+  PERSON:
+    action: REVERSIBLE
+    min_confidence: 0.6
+    below_min_confidence_action: PRESERVE
+  ADDRESS:
+    action: REVERSIBLE
+    min_confidence: 0.6
+    below_min_confidence_action: PRESERVE
+  CREDIT_CARD:  { action: BLOCK }
+  GOV_ID:       { action: BLOCK }
+  SECRET:       { action: BLOCK }
+  ORG:          { action: PRESERVE }
+  TITLE:        { action: PRESERVE }
+  DEMOGRAPHIC:  { action: PRESERVE }
+  MISC:         { action: PRESERVE }
+
+overrides:
+  locked_span_negation:
+    when_meta_negated: true
+    action: PRESERVE
+
+token_budget_mode: false
+compressible_length_threshold: 20
+
+output_scan:
+  enabled: true
+  reuse_input_rules: true
