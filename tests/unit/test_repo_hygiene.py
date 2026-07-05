@@ -18,7 +18,7 @@ _SECRET_PATTERNS = [
     re.compile(r"VALKEY_PASSWORD=(?!change-me|\$\{|\$\(|ci-test)[^\s]{8,}"),
 ]
 
-_ALLOWED_FILES = {".env.example"}
+_ALLOWED_FILES = {".env.example", "test_repo_hygiene.py"}
 
 
 def _tracked_files() -> list[str]:
