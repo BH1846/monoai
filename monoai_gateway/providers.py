@@ -50,6 +50,14 @@ class OpenAICompatibleProvider(ProviderAdapter):
         self._provider_name = provider_name
         self._timeout = timeout
         self._clients: dict[str, httpx.AsyncClient] = {}
+        # ProviderResponse.usage (monoai_router/contracts.py) is typed
+        # dict[str, int] and belongs to the untouched submodule -- OpenRouter's
+        # real per-request $ cost doesn't fit there, so it's kept here instead
+        # and pulled out by request_id via pop_cost().
+        self._last_cost: dict[str, float] = {}
+
+    def pop_cost(self, request_id: str) -> float | None:
+        return self._last_cost.pop(request_id, None)
 
     def _client_for(self, api_key: str) -> httpx.AsyncClient:
         client = self._clients.get(api_key)
@@ -91,6 +99,8 @@ class OpenAICompatibleProvider(ProviderAdapter):
         choice = data["choices"][0]
         content = choice["message"].get("content") or ""
         usage = data.get("usage", {}) or {}
+        if "cost" in usage:
+            self._last_cost[request_id] = float(usage["cost"])
 
         return ProviderResponse(
             request_id=request_id,

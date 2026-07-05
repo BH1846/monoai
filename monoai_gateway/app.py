@@ -77,7 +77,7 @@ async def lifespan(app: FastAPI):
     audit = AuditLogger(path=settings.audit_log_path)
 
     app.state.settings = settings
-    app.state.orchestrator = Orchestrator(pii, router, audit)
+    app.state.orchestrator = Orchestrator(pii, router, audit, provider=provider)
     app.state.audit = audit
 
     yield
@@ -158,6 +158,7 @@ async def chat_completions(
             "session_id": result.session_id,
             "provider": result.provider,
             "difficulty": result.difficulty,
+            "cost_usd": result.cost_usd,
             "unresolved_tokens": result.unresolved_tokens,
             "review_required": result.review_required,
             "sanitized_prompt": result.sanitized_prompt,

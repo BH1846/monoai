@@ -62,6 +62,7 @@ class ChatResult:
     provider: str
     difficulty: Optional[str]
     usage: dict
+    cost_usd: Optional[float]
     unresolved_tokens: list
     review_required: bool
     sanitized_prompt: str = ""
@@ -70,10 +71,11 @@ class ChatResult:
 
 
 class Orchestrator:
-    def __init__(self, pii: PiiGuard, router: LiteRouter, audit: AuditLogger):
+    def __init__(self, pii: PiiGuard, router: LiteRouter, audit: AuditLogger, provider: Any = None):
         self._pii = pii
         self._router = router
         self._audit = audit
+        self._provider = provider
         self._normalizer = RequestNormalizer()
 
     async def chat(self, raw_payload: dict[str, Any]) -> ChatResult:
@@ -142,6 +144,13 @@ class Orchestrator:
 
         total_ms = (time.monotonic() - t_start) * 1000.0
 
+        # cost_usd: real $ spent on this request, when the provider tracks it
+        # (e.g. OpenRouter's usage.cost) -- see providers.py's pop_cost().
+        # Keyed by response.request_id, not this method's own request_id --
+        # that's the id LiteRouter's internal RequestNormalizer generated and
+        # is what providers.py actually stored the cost under.
+        cost_usd = self._provider.pop_cost(response.request_id) if hasattr(self._provider, "pop_cost") else None
+
         # 5. Build the audit record (app.py schedules the actual write off
         # the response path via a BackgroundTask).
         record = {
@@ -160,6 +169,7 @@ class Orchestrator:
             "pii_rehydrate_ms": round(pii_rehydrate_ms, 3),
             "total_ms": round(total_ms, 3),
             "usage": response.usage,
+            "cost_usd": cost_usd,
         }
 
         # 6. Return.
@@ -171,6 +181,7 @@ class Orchestrator:
             provider=response.provider,
             difficulty=response.difficulty,
             usage=response.usage,
+            cost_usd=cost_usd,
             unresolved_tokens=unresolved,
             review_required=review_required,
             sanitized_prompt=sanitize_out.sanitized_prompt,
