@@ -4,5 +4,12 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.sqlite
+*.sqlite-journal
 *.jsonl
+uv.lock.tmp
+*.egg-info/
+dist/
+build/

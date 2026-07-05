@@ -1,0 +1,1 @@
+Phase 2: Arabic-Indic digit normalization + Gulf ID validators (Emirates ID, Saudi Iqama, Qatar QID, Kuwait Civil ID, Bahrain CPR, Oman civil number) + Arabic name/city gazetteer. `policies/gulf_sovereign.yaml` is a Phase 1 stub that does not yet activate this pack.

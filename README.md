@@ -42,7 +42,7 @@ see `monoai_gateway/pii.py`.
 # 1. Start Valkey (SENTINEL's vault master-key store — hard dependency,
 #    no on-disk fallback). Runs on 6380 to avoid clashing with any
 #    pre-existing Redis/Valkey on the default 6379.
-VALKEY_PASSWORD=bopFxD42WbOUWh2bn4FaV5iuThr-hNWMmrhCX6xbvN4 docker compose up -d
+VALKEY_PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))") docker compose up -d
 
 # 2. Create a venv and install both source repos editable + the gateway's deps
 python3 -m venv .venv && source .venv/bin/activate

@@ -1,0 +1,1 @@
+Phase 2: FastAPI+ONNX inference sidecar (batched `/ner`, `/ner-multi`, `/injection`, `/route-embed`). In Phase 1, NER inference runs in-process inside `core/detect/stages/ner_stage.py` — this directory is a placeholder until the HTTP/gRPC boundary is introduced.
