@@ -5,27 +5,23 @@ tokenization, declarative policy governance, per-key auth/budgets/rate
 limits, provider fallback chains, streaming, and a tamper-evident audit
 chain.
 
-This is **Phase 1 ("Gateway Core")** of a 4-phase build. See
-`monoai-gateway-2.0-master-plan.md` for the full plan and gap register,
-and `DECISIONS.md` for every deviation/simplification made along the way.
+This build is complete through **Phase 4 ("Sovereignty & agentic
+governance")** of the planned 4-phase build. See `DECISIONS.md` for every
+deviation/simplification made along the way.
 
-## Phase 1 status — gap register
+## Status — all 4 phases complete
 
-| Gap | What closes it | Proof |
+| Phase | Scope | Status |
 |---|---|---|
-| G1 (streaming) | `gateway/streaming.py` sliding-window rehydrator | `tests/integration/test_streaming.py` |
-| G2 (per-key auth) | `gateway/auth/` virtual keys, budgets, rate limits | `tests/integration/test_auth.py` |
-| G3 (policy) | `core/policy/` declarative YAML engine | `tests/integration/test_policy.py` |
-| G5 (output scan) | `PiiEngine.scan_output` before rehydration | `tests/integration/test_output_scan.py` |
-| G6 (fallback) | `gateway/providers/fallback_chain.py` + circuit breaker | `tests/integration/test_fallback.py` |
-| G8 (multi-turn) | `core/vault/session_tokens.py` value-deterministic tokens | `tests/integration/test_multiturn.py` |
-| G14 (secrets hygiene) | gitignored `.env`, CI gitleaks job | `tests/unit/test_repo_hygiene.py` |
+| Phase 1 — Gateway Core | streaming, per-key auth, declarative policy, output scan, provider fallback, multi-turn vault tokens, secrets hygiene | Done |
+| Phase 2 — Governance depth & routing intelligence | semantic injection judge, embedding router cascade, OTel observability, evidence-bundle + per-record audit signing, Postgres vault/audit backends | Done |
+| Phase 3 — Multi-surface scanning & streaming | `filescan-worker/` (PDF/DOCX/XLSX/CSV scan + redact), output-scan context suppression | Done |
+| Phase 4 — Sovereignty & agentic governance | `core/detect/packs/gulf_ar/` (Gulf/Arabic ID pack), `mcp-firewall/` (MCP tool-call firewall), Postgres key store + migration script, `bench/` benchmark harness | Done |
 
-G4/G7/G9-G13/G15/G16 (injection detection, embedding router, observability,
-tamper-evident signing, Postgres backends, Gulf/Arabic pack, benchmarks,
-file scanning, MCP firewall) are Phase 2-4 — see the placeholder
-`README.md` in `ner-sidecar/`, `filescan-worker/`, `mcp-firewall/`, `bench/`,
-and `core/detect/packs/gulf_ar/`.
+`ner-sidecar/` remains a placeholder (NER still runs in-process via
+`core/detect/stages/ner_stage.py`; the HTTP/gRPC sidecar boundary was not
+needed). See each subdirectory's own `README.md` for module-level detail,
+and `DECISIONS.md` for what was simplified or deferred within each phase.
 
 ## Quickstart
 
