@@ -32,3 +32,4 @@ compressible_length_threshold: 20
 output_scan:
   enabled: true
   reuse_input_rules: true
+  suppress_context: true

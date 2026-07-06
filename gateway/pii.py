@@ -16,6 +16,7 @@ from typing import Any
 from contracts.policy import Action
 from contracts.spans import TextUnit, TextUnitLocator
 from detect.pipeline import DetectionPipeline
+from detect.sentence_split import split_sentences
 from detect.stages.injection_judge import SemanticInjectionJudge, should_invoke_judge
 from detect.stages.injection_stage import InjectionDetector
 from obs.metrics import FINDINGS_TOTAL, INJECTION_FLAGGED_TOTAL, INJECTION_JUDGE_INVOCATIONS_TOTAL
@@ -26,6 +27,7 @@ from vault.session_tokens import TOKEN_PREFIX, derive_session_key, make_token_id
 from vault.storage.base import VaultStore
 
 _TOKEN_RE = re.compile(r"\[" + re.escape(TOKEN_PREFIX) + r"([0-9a-f]{10})\]")
+_CONTEXT_SUPPRESSED_MARKER = "[CONTEXT_SUPPRESSED]"
 
 # Ported from monoai_gateway/orchestrator.py: some models otherwise read
 # SENTINEL's own "preserve every PII_TOKEN placeholder" instruction plus a
@@ -204,16 +206,40 @@ class PiiEngine:
         ]
 
         ordered = sorted(decisions, key=lambda d: d.span.start)
+
+        # Phase 3: context-aware output masking. Masking just the PII
+        # token can still leak the same fact via the sentences around
+        # it (e.g. "She lives in Boston." right after a masked name) --
+        # when the policy opts in, also blank out the sentence
+        # immediately before/after the one containing an actioned span.
+        # Segments are merged with the per-span decisions below so both
+        # kinds of masking share one left-to-right pass over `text`.
+        context_segments: list[tuple[int, int, None]] = []
+        if policy.output_scan.suppress_context:
+            actionable = [d for d in ordered if d.action in (Action.BLOCK, Action.REVERSIBLE)]
+            if actionable:
+                context_segments = [
+                    (start, end, None) for start, end in self._context_suppression_ranges(text, actionable)
+                ]
+
+        segments: list[tuple[int, int, Any]] = [(d.span.start, d.span.end, d) for d in ordered]
+        segments.extend(context_segments)
+        segments.sort(key=lambda s: s[0])
+
         out: list[str] = []
         last_end = 0
         new_token_ids: set[str] = set()
         with stage_span("vault", session_id=session_id, decision_count=len(ordered)):
-            for d in ordered:
-                span = d.span
-                if span.start < last_end:
+            for start, end, d in segments:
+                if start < last_end:
                     continue
+                out.append(text[last_end:start])
+                if d is None:
+                    out.append(_CONTEXT_SUPPRESSED_MARKER)
+                    last_end = end
+                    continue
+                span = d.span
                 FINDINGS_TOTAL.labels(label=span.label.value, action=d.action.value).inc()
-                out.append(text[last_end:span.start])
                 if d.action == Action.BLOCK:
                     out.append(f"[REDACTED_OUTPUT_{span.label.value}]")
                 elif d.action == Action.REVERSIBLE:
@@ -223,9 +249,36 @@ class PiiEngine:
                     new_token_ids.add(token_id)
                 else:
                     out.append(span.text)
-                last_end = span.end
+                last_end = end
         out.append(text[last_end:])
         return "".join(out), new_token_ids
+
+    @staticmethod
+    def _context_suppression_ranges(text: str, actionable_decisions: list) -> list[tuple[int, int]]:
+        """Returns the (start, end) ranges of sentences adjacent to (but
+        not themselves containing) an actioned PII span -- the sentence
+        WITH the match already gets its own token masked via the normal
+        per-span path, so only its neighbors need blanking here."""
+        sentences = split_sentences(text)
+        if not sentences:
+            return []
+
+        matched_idx: set[int] = set()
+        for d in actionable_decisions:
+            for i, sentence in enumerate(sentences):
+                if sentence.start <= d.span.start < sentence.end:
+                    matched_idx.add(i)
+                    break
+
+        context_idx: set[int] = set()
+        for i in matched_idx:
+            if i - 1 >= 0:
+                context_idx.add(i - 1)
+            if i + 1 < len(sentences):
+                context_idx.add(i + 1)
+        context_idx -= matched_idx
+
+        return [(sentences[i].start, sentences[i].end) for i in sorted(context_idx)]
 
     def strip_tokens_for_classification(self, text: str) -> str:
         """The bracketed token embeds hex digits (0-9a-f mixed), which

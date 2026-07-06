@@ -32,10 +32,11 @@ class SpanSource(str, Enum):
 
 
 class TextUnitLocator(BaseModel):
-    """Where a TextUnit came from. `surface` grows in later phases
-    (file_field, mcp_arg); Phase 1 only produces "chat_message"."""
+    """Where a TextUnit came from. `surface` grew from Phase 1's
+    "chat_message"-only to also cover Phase 3's filescan-worker
+    ("file_field") and Phase 4's MCP tool firewall ("mcp_arg")."""
 
-    surface: Literal["chat_message"]
+    surface: Literal["chat_message", "file_field", "mcp_arg"]
     path: str
 
 

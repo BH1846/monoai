@@ -25,6 +25,7 @@ class DetectorsConfig(BaseModel):
 class OutputScanConfig(BaseModel):
     enabled: bool = True
     reuse_input_rules: bool = True
+    suppress_context: bool = False  # Phase 3: also mask sentences adjacent to a masked PII output span
 
 
 class InjectionPolicyConfig(BaseModel):
