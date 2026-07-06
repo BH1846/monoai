@@ -55,6 +55,17 @@ class Settings:
     audit_webhook_url: str | None = field(default_factory=lambda: os.environ.get("AUDIT_WEBHOOK_URL") or None)
     audit_signing_key_name: str = field(default_factory=lambda: os.environ.get("AUDIT_SIGNING_KEY_NAME", "monoai:audit:signing_key"))
 
+    # -- per-record tamper-evident signing (G13) --
+    audit_sign_enabled: bool = field(default_factory=lambda: _env_bool("MONOAI_AUDIT_SIGN", False))
+    audit_sign_key: str | None = field(default_factory=lambda: os.environ.get("MONOAI_AUDIT_SIGN_KEY") or None)
+
+    # -- Tier 2.5 semantic injection judge (G4) --
+    llm_judge_enabled: bool = field(default_factory=lambda: _env_bool("MONOAI_ENABLE_LLM_JUDGE", False))
+    llm_judge_ollama_model: str = field(default_factory=lambda: os.environ.get("MONOAI_LLM_JUDGE_MODEL", "qwen2.5:7b"))
+    llm_judge_claude_api_key: str | None = field(default_factory=lambda: os.environ.get("MONOAI_LLM_JUDGE_CLAUDE_API_KEY") or None)
+    llm_judge_claude_model: str = field(default_factory=lambda: os.environ.get("MONOAI_LLM_JUDGE_CLAUDE_MODEL", "claude-haiku-4-5-20251001"))
+    llm_judge_timeout_s: float = field(default_factory=lambda: float(os.environ.get("MONOAI_LLM_JUDGE_TIMEOUT_S", "5")))
+
     # -- valkey (vault master key + rate limiter) --
     valkey_host: str = field(default_factory=lambda: os.environ.get("VALKEY_HOST", "127.0.0.1"))
     valkey_port: int = field(default_factory=lambda: int(os.environ.get("VALKEY_PORT", "6380")))
@@ -84,6 +95,10 @@ class Settings:
     cloud_api_key_simple: str | None = field(default_factory=lambda: os.environ.get("CLOUD_API_KEY_SIMPLE") or None)
     cloud_api_key_moderate: str | None = field(default_factory=lambda: os.environ.get("CLOUD_API_KEY_MODERATE") or None)
     cloud_api_key_complex: str | None = field(default_factory=lambda: os.environ.get("CLOUD_API_KEY_COMPLEX") or None)
+
+    # -- OTEL observability (G9) --
+    otel_exporter_otlp_endpoint: str | None = field(default_factory=lambda: os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or None)
+    otel_service_name: str = field(default_factory=lambda: os.environ.get("OTEL_SERVICE_NAME", "monoai-gateway"))
 
     # -- circuit breaker / retry (per fallback route) --
     circuit_failure_threshold: int = field(default_factory=lambda: int(os.environ.get("CIRCUIT_FAILURE_THRESHOLD", "5")))

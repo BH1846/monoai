@@ -19,6 +19,7 @@ from typing import Any
 from auth.middleware import authenticate, check_budget, check_model_allowed, check_rate_limit
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from obs.tracing import stage_span
 from orchestrator import ChatResult, Orchestrator, ProviderFailureError
 from pii import BlockedContentError
 from router.normalizer import NormalizationError
@@ -100,10 +101,11 @@ async def chat_completions(
 
     model_id = payload.get("model")
 
-    key = authenticate(authorization, key_store)
-    check_budget(key)
-    check_model_allowed(key, model_id)
-    check_rate_limit(key, limiter)
+    with stage_span("auth", model_id=model_id):
+        key = authenticate(authorization, key_store)
+        check_budget(key)
+        check_model_allowed(key, model_id)
+        check_rate_limit(key, limiter)
 
     session_id = payload.get("session_id")
     stream = bool(payload.get("stream", False))

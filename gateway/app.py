@@ -10,12 +10,14 @@ from contextlib import asynccontextmanager
 import redis
 from audit.chain import AuditChain
 from audit.sinks import JsonlSink, PostgresSink, WebhookSink, read_last_hash
+from audit.signer import load_signing_key as load_record_signing_key
 from audit.signing import load_or_create_signing_key
 from auth.middleware import register_auth_exception_handlers
 from auth.rate_limit import TokenBucketRateLimiter
 from auth.store import SqliteKeyStore
 from config import Settings, load_settings
 from detect.pipeline import DetectionPipeline
+from detect.stages.injection_judge import SemanticInjectionJudge
 from fastapi import FastAPI
 from orchestrator import Orchestrator
 from pii import PiiEngine
@@ -101,7 +103,17 @@ async def lifespan(app: FastAPI):
     pipeline = DetectionPipeline(use_onnx_ner=settings.pii_use_onnx_ner)
     vault_crypto = VaultCrypto(valkey_client, key_name=settings.valkey_key_name)
     vault_store = _build_vault_store(settings, vault_crypto)
-    pii = PiiEngine(pipeline, vault_store, settings.session_token_secret)
+    semantic_judge = SemanticInjectionJudge(
+        ollama_base_url=settings.ollama_base_url,
+        ollama_model=settings.llm_judge_ollama_model,
+        claude_api_key=settings.llm_judge_claude_api_key,
+        claude_model=settings.llm_judge_claude_model,
+        timeout_s=settings.llm_judge_timeout_s,
+    )
+    pii = PiiEngine(
+        pipeline, vault_store, settings.session_token_secret,
+        semantic_judge=semantic_judge, llm_judge_enabled=settings.llm_judge_enabled,
+    )
 
     policy_store = PolicyStore()
     policy_store.load_dir(settings.policy_dir)
@@ -120,7 +132,10 @@ async def lifespan(app: FastAPI):
     elif isinstance(audit_sink, PostgresSink):
         existing = audit_sink.read_all()
         initial_last_hash = existing[-1].hash if existing else None
-    audit_chain = AuditChain(audit_sink, initial_last_hash=initial_last_hash)
+    record_signing_key = None
+    if settings.audit_sign_enabled:
+        record_signing_key = load_record_signing_key(settings.audit_sign_key, settings.session_token_secret)
+    audit_chain = AuditChain(audit_sink, initial_last_hash=initial_last_hash, signing_key=record_signing_key)
 
     signing_key = load_or_create_signing_key(valkey_client, key_name=settings.audit_signing_key_name)
 
@@ -149,9 +164,14 @@ async def lifespan(app: FastAPI):
         await provider.aclose()
 
 
-from obs.tracing import configure_tracing  # noqa: E402
+from config import load_settings as _load_settings_for_otel  # noqa: E402
+from obs.otel import configure_otel  # noqa: E402
 
-configure_tracing()
+_otel_settings = _load_settings_for_otel()
+configure_otel(
+    otlp_endpoint=_otel_settings.otel_exporter_otlp_endpoint,
+    service_name=_otel_settings.otel_service_name,
+)
 
 app = FastAPI(title="monoai-gateway-2.0", lifespan=lifespan)
 register_auth_exception_handlers(app)

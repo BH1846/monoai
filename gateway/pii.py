@@ -16,8 +16,10 @@ from typing import Any
 from contracts.policy import Action
 from contracts.spans import TextUnit, TextUnitLocator
 from detect.pipeline import DetectionPipeline
+from detect.stages.injection_judge import SemanticInjectionJudge, should_invoke_judge
 from detect.stages.injection_stage import InjectionDetector
-from obs.metrics import FINDINGS_TOTAL, INJECTION_FLAGGED_TOTAL
+from obs.metrics import FINDINGS_TOTAL, INJECTION_FLAGGED_TOTAL, INJECTION_JUDGE_INVOCATIONS_TOTAL
+from obs.tracing import stage_span
 from policy.engine import evaluate
 from policy.schema import Policy
 from vault.session_tokens import TOKEN_PREFIX, derive_session_key, make_token_id
@@ -64,14 +66,43 @@ class PiiEngine:
         vault: VaultStore,
         server_secret: str,
         injection_detector: InjectionDetector | None = None,
+        semantic_judge: SemanticInjectionJudge | None = None,
+        llm_judge_enabled: bool = False,
     ) -> None:
         self._pipeline = pipeline
         self._vault = vault
         self._server_secret = server_secret
         self._injection_detector = injection_detector or InjectionDetector.load()
+        # G4: Tier 2.5 semantic judge. Only ever consulted when both the
+        # deployment-wide MONOAI_ENABLE_LLM_JUDGE flag is on AND the
+        # per-call trigger condition (ambiguous confidence / policy
+        # semantic_depth) fires -- see should_invoke_judge().
+        self._semantic_judge = semantic_judge or SemanticInjectionJudge()
+        self._llm_judge_enabled = llm_judge_enabled
 
     def _session_key(self, session_id: str) -> bytes:
         return derive_session_key(session_id, self._server_secret)
+
+    def _check_injection(self, content: str, policy: Policy) -> bool:
+        """Tier 2 (heuristic + trained classifier) always runs; Tier 2.5
+        (LLM judge) only runs when should_invoke_judge()'s trigger fires
+        AND the deployment has MONOAI_ENABLE_LLM_JUDGE=true. The judge's
+        verdict overrides Tier 2's when it answers; any judge outage
+        (network down, bad output) silently falls back to the Tier 2
+        result -- an optional upgrade must never block the request path."""
+        tier2 = self._injection_detector.detect(content, threshold=policy.injection.threshold)
+
+        if not self._llm_judge_enabled or not should_invoke_judge(tier2.score, policy.injection.semantic_depth):
+            return tier2.is_injection
+
+        with stage_span("injection_judge", semantic_depth=policy.injection.semantic_depth):
+            judge_result = self._semantic_judge.judge(content)
+        INJECTION_JUDGE_INVOCATIONS_TOTAL.labels(
+            backend=judge_result.backend or "none", available=str(judge_result.available)
+        ).inc()
+        if judge_result.available:
+            return judge_result.is_injection
+        return tier2.is_injection
 
     def sanitize_messages(self, messages: list[Any], session_id: str, policy: Policy) -> SanitizeResult:
         from router.contracts import (
@@ -91,8 +122,8 @@ class PiiEngine:
                 continue
 
             if policy.injection.enabled:
-                injection_result = self._injection_detector.detect(msg.content, threshold=policy.injection.threshold)
-                if injection_result.is_injection:
+                is_injection = self._check_injection(msg.content, policy)
+                if is_injection:
                     INJECTION_FLAGGED_TOTAL.labels(action=policy.injection.action).inc()
                     span_counts["PROMPT_INJECTION"] = span_counts.get("PROMPT_INJECTION", 0) + 1
                     if policy.injection.action == "BLOCK":
@@ -104,8 +135,10 @@ class PiiEngine:
                 locator=TextUnitLocator(surface="chat_message", path=f"messages[{turn_index}].content"),
                 turn_index=turn_index, direction="input",
             )
-            spans = self._pipeline.run([unit])
-            decisions = evaluate(spans, policy)
+            with stage_span("detect", unit_id=unit.unit_id):
+                spans = self._pipeline.run([unit])
+            with stage_span("policy", unit_id=unit.unit_id, policy_id=policy.policy_id, span_count=len(spans)):
+                decisions = evaluate(spans, policy)
 
             for d in decisions:
                 span_counts[d.span.label.value] = span_counts.get(d.span.label.value, 0) + 1
@@ -174,22 +207,23 @@ class PiiEngine:
         out: list[str] = []
         last_end = 0
         new_token_ids: set[str] = set()
-        for d in ordered:
-            span = d.span
-            if span.start < last_end:
-                continue
-            FINDINGS_TOTAL.labels(label=span.label.value, action=d.action.value).inc()
-            out.append(text[last_end:span.start])
-            if d.action == Action.BLOCK:
-                out.append(f"[REDACTED_OUTPUT_{span.label.value}]")
-            elif d.action == Action.REVERSIBLE:
-                token_id = make_token_id(session_key, span.text)
-                out.append(f"[{TOKEN_PREFIX}{token_id}]")
-                self._vault.write_async(session_id, token_id, span.text)
-                new_token_ids.add(token_id)
-            else:
-                out.append(span.text)
-            last_end = span.end
+        with stage_span("vault", session_id=session_id, decision_count=len(ordered)):
+            for d in ordered:
+                span = d.span
+                if span.start < last_end:
+                    continue
+                FINDINGS_TOTAL.labels(label=span.label.value, action=d.action.value).inc()
+                out.append(text[last_end:span.start])
+                if d.action == Action.BLOCK:
+                    out.append(f"[REDACTED_OUTPUT_{span.label.value}]")
+                elif d.action == Action.REVERSIBLE:
+                    token_id = make_token_id(session_key, span.text)
+                    out.append(f"[{TOKEN_PREFIX}{token_id}]")
+                    self._vault.write_async(session_id, token_id, span.text)
+                    new_token_ids.add(token_id)
+                else:
+                    out.append(span.text)
+                last_end = span.end
         out.append(text[last_end:])
         return "".join(out), new_token_ids
 
@@ -221,7 +255,8 @@ class PiiEngine:
             unresolved.append(token_id)
             return "[UNRESOLVED_PII_TOKEN]"
 
-        final_text = _TOKEN_RE.sub(_sub, text)
+        with stage_span("vault", session_id=session_id, input_token_count=len(input_token_ids)):
+            final_text = _TOKEN_RE.sub(_sub, text)
         return final_text, unresolved, bool(unresolved)
 
     def _apply_tokens(
@@ -231,20 +266,21 @@ class PiiEngine:
         out: list[str] = []
         last_end = 0
         minted: set[str] = set()
-        for d in ordered:
-            span = d.span
-            if span.start < last_end:
-                continue
-            out.append(text[last_end:span.start])
-            if d.action in (Action.REVERSIBLE, Action.BLOCK):
-                token_id = make_token_id(session_key, span.text)
-                out.append(f"[{TOKEN_PREFIX}{token_id}]")
-                if d.action == Action.REVERSIBLE and vault_write:
-                    self._vault.write_async(session_id, token_id, span.text)
-                    minted.add(token_id)
-                # BLOCK: token generated but never vaulted -- can never be rehydrated.
-            else:
-                out.append(span.text)
-            last_end = span.end
+        with stage_span("vault", session_id=session_id, vault_write=vault_write, decision_count=len(ordered)):
+            for d in ordered:
+                span = d.span
+                if span.start < last_end:
+                    continue
+                out.append(text[last_end:span.start])
+                if d.action in (Action.REVERSIBLE, Action.BLOCK):
+                    token_id = make_token_id(session_key, span.text)
+                    out.append(f"[{TOKEN_PREFIX}{token_id}]")
+                    if d.action == Action.REVERSIBLE and vault_write:
+                        self._vault.write_async(session_id, token_id, span.text)
+                        minted.add(token_id)
+                    # BLOCK: token generated but never vaulted -- can never be rehydrated.
+                else:
+                    out.append(span.text)
+                last_end = span.end
         out.append(text[last_end:])
         return "".join(out), minted

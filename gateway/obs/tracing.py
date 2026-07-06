@@ -18,11 +18,13 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 _TRACER_NAME = "monoai.gateway"
 
 
-def configure_tracing(exporter=None) -> Any:
+def configure_tracing(exporter=None, resource: Resource | None = None) -> Any:
     """Configures the global TracerProvider once. Returns the exporter
     (InMemorySpanExporter in tests, otherwise whatever was passed) so
-    callers/tests can inspect finished spans."""
-    provider = TracerProvider(resource=Resource.create({"service.name": "monoai-gateway"}))
+    callers/tests can inspect finished spans. `resource` lets
+    obs.otel.configure_otel() supply a deployment-specific
+    service.name; defaults to "monoai-gateway" when not given."""
+    provider = TracerProvider(resource=resource or Resource.create({"service.name": "monoai-gateway"}))
     exporter = exporter if exporter is not None else InMemorySpanExporter()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     trace.set_tracer_provider(provider)

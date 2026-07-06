@@ -33,6 +33,7 @@ class InjectionPolicyConfig(BaseModel):
     enabled: bool = False
     threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     action: str = Field(default="BLOCK", pattern="^(BLOCK|FLAG)$")
+    semantic_depth: bool = False  # G4: always invoke the Tier 2.5 LLM judge, not just on ambiguous confidence
 
 
 class Policy(BaseModel):

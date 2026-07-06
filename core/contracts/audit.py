@@ -16,6 +16,7 @@ class AuditRecord(BaseModel):
     record_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     prev_hash: str | None = None
     hash: str | None = None
+    signature: str | None = None  # G13: Ed25519 sig over `hash`, set by AuditChain.append when signing is on
     ts: float
     request_id: str
     session_id: str
@@ -44,6 +45,9 @@ class AuditRecord(BaseModel):
     circuit_state: str | None = None
     unresolved_tokens: list[str] = Field(default_factory=list)
     review_required: bool = False
+    router_tier: str | None = None
+    router_confidence: float | None = None
+    router_rationale: str | None = None
     pii_sanitize_ms: float | None = None
     router_ms: float | None = None
     pii_rehydrate_ms: float | None = None

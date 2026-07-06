@@ -12,9 +12,16 @@ import json
 
 from contracts.audit import AuditRecord
 
+from audit.signer import sign_record, verify_record
+
 
 def _canonical_json(record: AuditRecord) -> str:
-    data = record.model_dump(exclude={"hash"}, mode="json")
+    # "signature" is excluded alongside "hash": it's derived FROM the
+    # hash (G13) and computed after compute_hash runs, so it can never
+    # be part of what the hash covers -- otherwise every signed record
+    # would hash differently than it did at write time (signature is
+    # None during the initial compute, non-None once persisted).
+    data = record.model_dump(exclude={"hash", "signature"}, mode="json")
     return json.dumps(data, sort_keys=True, default=str)
 
 
@@ -24,16 +31,25 @@ def compute_hash(prev_hash: str | None, record: AuditRecord) -> str:
 
 
 class AuditChain:
-    """Owns the running `last_hash` state and appends through a sink."""
+    """Owns the running `last_hash` state and appends through a sink.
 
-    def __init__(self, sink, initial_last_hash: str | None = None) -> None:
+    `signing_key`, when provided (MONOAI_AUDIT_SIGN=true), makes every
+    appended record carry an Ed25519 signature over its own chain hash
+    (G13) -- not just the hash chain itself. A tampered single record
+    is then detectable in isolation, without replaying the whole chain.
+    """
+
+    def __init__(self, sink, initial_last_hash: str | None = None, signing_key=None) -> None:
         self._sink = sink
         self._last_hash = initial_last_hash
+        self._signing_key = signing_key
 
     def append(self, record: AuditRecord) -> AuditRecord:
-        record = record.model_copy(update={"prev_hash": self._last_hash, "hash": None})
+        record = record.model_copy(update={"prev_hash": self._last_hash, "hash": None, "signature": None})
         h = compute_hash(self._last_hash, record)
         record = record.model_copy(update={"hash": h})
+        if self._signing_key is not None:
+            record = record.model_copy(update={"signature": sign_record(record, self._signing_key)})
         self._sink.write(record)
         self._last_hash = h
         return record
@@ -43,15 +59,20 @@ class AuditChain:
         return self._last_hash
 
 
-def verify(records: list[AuditRecord]) -> bool:
-    """Walk the chain, recomputing each hash and comparing. Returns False
-    on the first mismatch (wrong prev_hash link or a tampered field)."""
+def verify(records: list[AuditRecord], public_key_hex: str | None = None) -> bool:
+    """Walk the chain, recomputing each hash (and, if `public_key_hex`
+    is given, each record's Ed25519 signature) and comparing. Returns
+    False on the first mismatch (wrong prev_hash link, a tampered
+    field, or -- when signature verification is requested -- a missing
+    or invalid signature)."""
     prev_hash: str | None = None
     for record in records:
         if record.prev_hash != prev_hash:
             return False
         expected = compute_hash(prev_hash, record)
         if record.hash != expected:
+            return False
+        if public_key_hex is not None and not verify_record(record, public_key_hex):
             return False
         prev_hash = record.hash
     return True
