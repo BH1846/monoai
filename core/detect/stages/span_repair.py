@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 
 from contracts.spans import SpanLabel, SpanSource
+
 from detect.span import RawSpan
 
 _DIGIT_RUN_LABELS = {SpanLabel.PHONE, SpanLabel.CREDIT_CARD, SpanLabel.GOV_ID}

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
-
 from contracts.policy import Action
 from contracts.spans import SpanLabel
+from pydantic import BaseModel, Field
 
 
 class PolicyRule(BaseModel):

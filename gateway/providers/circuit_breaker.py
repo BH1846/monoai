@@ -10,8 +10,8 @@ failure -> back to OPEN with the timer reset.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from enum import Enum
-from typing import Callable
 
 
 class CircuitState(str, Enum):

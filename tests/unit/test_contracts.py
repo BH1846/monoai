@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
-
 from contracts.audit import AuditRecord
 from contracts.policy import Action, PolicyDecision
 from contracts.scan import ScanRequest, ScanResult, Verdict
 from contracts.spans import DetectedSpan, SpanLabel, SpanSource, TextUnit, TextUnitLocator
+from pydantic import ValidationError
 
 
 def _text_unit() -> TextUnit:

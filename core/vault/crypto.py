@@ -16,7 +16,6 @@ private key (never leaves this module's owner) can unseal it back.
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from nacl.public import PrivateKey, PublicKey, SealedBox
@@ -48,7 +47,7 @@ class VaultCrypto:
     Stateless w.r.t. any particular entry -- safe to share across threads.
     """
 
-    def __init__(self, valkey_client, key_name: Optional[str] = None) -> None:
+    def __init__(self, valkey_client, key_name: str | None = None) -> None:
         self._key_name = key_name or _DEFAULT_KEY_NAME
         self._private_key = _load_or_create_master_key(valkey_client, self._key_name)
         self._public_key: PublicKey = self._private_key.public_key
@@ -57,13 +56,13 @@ class VaultCrypto:
         """Returns (nonce, ciphertext, sealed_dek)."""
         dek = os.urandom(32)
         nonce = os.urandom(12)
-        aad = f"{session_id}:{token_id}".encode("utf-8")
+        aad = f"{session_id}:{token_id}".encode()
         ciphertext = AESGCM(dek).encrypt(nonce, plaintext.encode("utf-8"), aad)
         sealed_dek = SealedBox(self._public_key).encrypt(dek)
         return nonce, ciphertext, sealed_dek
 
     def decrypt(self, session_id: str, token_id: str, nonce: bytes, ciphertext: bytes, sealed_dek: bytes) -> str:
         dek = SealedBox(self._private_key).decrypt(sealed_dek)
-        aad = f"{session_id}:{token_id}".encode("utf-8")
+        aad = f"{session_id}:{token_id}".encode()
         plaintext = AESGCM(dek).decrypt(nonce, ciphertext, aad)
         return plaintext.decode("utf-8")

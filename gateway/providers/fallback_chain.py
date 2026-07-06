@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from router.contracts import ProviderResponse, RequestContext
+
 from providers.base import ProviderAdapter
 from providers.circuit_breaker import CircuitBreaker
 from providers.retry import is_retryable, retry_with_backoff
-from router.contracts import ProviderResponse, RequestContext
 
 
 @dataclass

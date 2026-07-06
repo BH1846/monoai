@@ -8,8 +8,6 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 import redis
-from fastapi import FastAPI
-
 from audit.chain import AuditChain
 from audit.sinks import JsonlSink, read_last_hash
 from auth.middleware import register_auth_exception_handlers
@@ -17,6 +15,7 @@ from auth.rate_limit import TokenBucketRateLimiter
 from auth.store import SqliteKeyStore
 from config import Settings, load_settings
 from detect.pipeline import DetectionPipeline
+from fastapi import FastAPI
 from orchestrator import Orchestrator
 from pii import PiiEngine
 from policy.store import PolicyStore

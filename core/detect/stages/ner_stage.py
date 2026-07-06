@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Optional, Protocol
+from typing import Protocol
 
 from contracts.spans import SpanLabel, SpanSource
+
 from detect.span import RawSpan
 
 
@@ -333,7 +334,7 @@ class MiniLMNER:
     the rule-based fallback so the pipeline stays fully functional offline.
     """
 
-    def __init__(self, model_path: Optional[str] = None):
+    def __init__(self, model_path: str | None = None):
         self.backend_name = "rule_based"
         self._backend: NERBackend = RuleBasedNERBackend()
 

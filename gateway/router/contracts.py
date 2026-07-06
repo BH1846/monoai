@@ -4,7 +4,7 @@ adapters. Ported verbatim from Lite_Multimodel_switching/monoai_router/contracts
 from __future__ import annotations
 
 import uuid
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -19,7 +19,7 @@ class ContentPart(BaseModel):
 
 class Message(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
-    content: Union[str, list[ContentPart]]
+    content: str | list[ContentPart]
     tool_call_id: str | None = None
     name: str | None = None
 

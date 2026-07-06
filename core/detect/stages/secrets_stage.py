@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 
 from contracts.spans import SpanLabel, SpanSource
+
 from detect.span import RawSpan
 
 _SECRET_PATTERNS = [

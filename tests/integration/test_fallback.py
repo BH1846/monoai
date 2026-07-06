@@ -1,6 +1,5 @@
 """G6 proof tests: per-tier fallback chains, retry, circuit breaker."""
 import pytest
-
 from providers.fallback_chain import AllProvidersDownError, FallbackChain, Route
 from providers.stub import StubProvider
 from router.contracts import Message, RequestContext

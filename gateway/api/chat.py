@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, AsyncIterator
-
-from fastapi import APIRouter, Header, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from collections.abc import AsyncIterator
+from typing import Any
 
 from auth.middleware import authenticate, check_budget, check_model_allowed, check_rate_limit
+from fastapi import APIRouter, Header, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from orchestrator import ChatResult, Orchestrator, ProviderFailureError
 from pii import BlockedContentError
 from router.normalizer import NormalizationError

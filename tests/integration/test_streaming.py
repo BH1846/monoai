@@ -1,8 +1,7 @@
 """G1 proof tests: SSE sliding-window rehydration."""
 import time
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
-from contracts.spans import TextUnit, TextUnitLocator
 from detect.pipeline import DetectionPipeline
 from pii import PiiEngine
 from policy.store import PolicyStore

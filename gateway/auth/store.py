@@ -8,7 +8,7 @@ import json
 import secrets
 import sqlite3
 import time
-from typing import Optional, Protocol
+from typing import Protocol
 
 from auth.models import VirtualKey
 
@@ -33,16 +33,16 @@ CREATE TABLE IF NOT EXISTS virtual_keys (
 class KeyStore(Protocol):
     def create_key(
         self,
-        team_id: Optional[str] = None,
+        team_id: str | None = None,
         policy_id: str = "default",
-        model_allowlist: Optional[list[str]] = None,
-        budget_usd_monthly: Optional[float] = None,
+        model_allowlist: list[str] | None = None,
+        budget_usd_monthly: float | None = None,
         rate_limit_rps: float = 5.0,
         rate_limit_burst: int = 20,
     ) -> tuple[str, VirtualKey]:
         ...
 
-    def get_by_hash(self, key_hash: str) -> Optional[VirtualKey]:
+    def get_by_hash(self, key_hash: str) -> VirtualKey | None:
         ...
 
     def update_budget_spent(self, key_id: str, budget_usd_spent: float) -> None:
@@ -51,7 +51,7 @@ class KeyStore(Protocol):
     def revoke(self, key_id: str) -> None:
         ...
 
-    def list_keys(self, team_id: Optional[str] = None) -> list[VirtualKey]:
+    def list_keys(self, team_id: str | None = None) -> list[VirtualKey]:
         ...
 
 
@@ -75,10 +75,10 @@ class SqliteKeyStore:
 
     def create_key(
         self,
-        team_id: Optional[str] = None,
+        team_id: str | None = None,
         policy_id: str = "default",
-        model_allowlist: Optional[list[str]] = None,
-        budget_usd_monthly: Optional[float] = None,
+        model_allowlist: list[str] | None = None,
+        budget_usd_monthly: float | None = None,
         rate_limit_rps: float = 5.0,
         rate_limit_burst: int = 20,
     ) -> tuple[str, VirtualKey]:
@@ -105,7 +105,7 @@ class SqliteKeyStore:
         self._conn.commit()
         return raw_key, key
 
-    def get_by_hash(self, key_hash: str) -> Optional[VirtualKey]:
+    def get_by_hash(self, key_hash: str) -> VirtualKey | None:
         row = self._conn.execute(
             "SELECT key_id, key_hash, team_id, policy_id, model_allowlist, budget_usd_monthly, "
             "budget_usd_spent, rate_limit_rps, rate_limit_burst, active, created_at, revoked_at "
@@ -128,7 +128,7 @@ class SqliteKeyStore:
         )
         self._conn.commit()
 
-    def list_keys(self, team_id: Optional[str] = None) -> list[VirtualKey]:
+    def list_keys(self, team_id: str | None = None) -> list[VirtualKey]:
         if team_id is None:
             rows = self._conn.execute(
                 "SELECT key_id, key_hash, team_id, policy_id, model_allowlist, budget_usd_monthly, "

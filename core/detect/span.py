@@ -32,5 +32,5 @@ class RawSpan:
     def length(self) -> int:
         return self.end - self.start
 
-    def overlaps(self, other: "RawSpan") -> bool:
+    def overlaps(self, other: RawSpan) -> bool:
         return self.start < other.end and other.start < self.end

@@ -29,7 +29,7 @@ TOKEN_PREFIX = "PII_TOKEN_"
 def derive_session_key(session_id: str, server_secret: str) -> bytes:
     """One per-deployment secret (SESSION_TOKEN_SECRET) + the session_id ->
     a session-scoped HMAC key. Cheap to recompute; never persisted."""
-    return hashlib.sha256(f"{session_id}:{server_secret}".encode("utf-8")).digest()
+    return hashlib.sha256(f"{session_id}:{server_secret}".encode()).digest()
 
 
 def make_token_id(session_key: bytes, value: str) -> str:

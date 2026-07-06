@@ -12,9 +12,10 @@ generalized from "one document" to "one or more TextUnits").
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from contracts.spans import DetectedSpan, TextUnit
+
 from detect.normalize import map_span, normalize_with_offsets
 from detect.sentence_split import Sentence, split_sentences
 from detect.span import RawSpan
@@ -54,9 +55,9 @@ class DetectionPipeline:
 
     def __init__(
         self,
-        regex_detector: Optional[RegexDetector] = None,
-        secrets_detector: Optional[SecretsDetector] = None,
-        ner: Optional[MiniLMNER] = None,
+        regex_detector: RegexDetector | None = None,
+        secrets_detector: SecretsDetector | None = None,
+        ner: MiniLMNER | None = None,
         use_onnx_ner: bool = True,
     ) -> None:
         self._regex = regex_detector or RegexDetector()

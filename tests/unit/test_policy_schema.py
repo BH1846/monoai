@@ -1,6 +1,5 @@
 import pytest
 import yaml
-
 from policy.schema import Policy
 from pydantic import ValidationError
 

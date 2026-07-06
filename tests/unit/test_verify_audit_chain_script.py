@@ -2,9 +2,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from contracts.audit import AuditRecord
 from audit.chain import AuditChain
 from audit.sinks import JsonlSink
+from contracts.audit import AuditRecord
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "verify_audit_chain.py"

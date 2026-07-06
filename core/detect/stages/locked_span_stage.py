@@ -23,9 +23,9 @@ Pure regex, single finditer pass per entity type -> O(n) in text length.
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 from contracts.spans import SpanLabel, SpanSource
+
 from detect.span import RawSpan
 from detect.stages.regex_stage import (
     _CC_CANDIDATE_RE,
@@ -58,7 +58,7 @@ _DATETIME_VALUE_RE = re.compile(
 
 class _EntityAnchor:
     def __init__(self, label: SpanLabel, type_words: str, value_re: re.Pattern,
-                 value_validator=None, pattern: Optional[str] = None):
+                 value_validator=None, pattern: str | None = None):
         self.label = label
         self.anchor_re = re.compile(
             pattern if pattern is not None else (
@@ -99,7 +99,7 @@ def _is_negated(match: re.Match) -> bool:
     return "n't" in match.group("copula").lower()
 
 
-def _locate_value(anchor: _EntityAnchor, zone_start: int, zone_text: str) -> Optional[RawSpan]:
+def _locate_value(anchor: _EntityAnchor, zone_start: int, zone_text: str) -> RawSpan | None:
     value_match = anchor.value_re.search(zone_text)
     if not value_match:
         return None

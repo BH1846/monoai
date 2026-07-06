@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 
 from contracts.spans import SpanLabel, SpanSource
+
 from detect.span import RawSpan
 
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")

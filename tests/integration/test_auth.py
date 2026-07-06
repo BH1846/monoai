@@ -5,9 +5,6 @@ authenticate/check_budget/check_model_allowed/check_rate_limit functions
 around a dummy endpoint -- Step 9 wires the same functions into the real
 /v1/chat/completions endpoint.
 """
-from fastapi import FastAPI, Header, Request
-from fastapi.testclient import TestClient
-
 from auth.middleware import (
     authenticate,
     check_budget,
@@ -17,6 +14,8 @@ from auth.middleware import (
 )
 from auth.rate_limit import TokenBucketRateLimiter
 from auth.store import SqliteKeyStore
+from fastapi import FastAPI, Header, Request
+from fastapi.testclient import TestClient
 
 
 class _FakeRedis:

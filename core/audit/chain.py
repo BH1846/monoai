@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Optional
 
 from contracts.audit import AuditRecord
 
@@ -19,7 +18,7 @@ def _canonical_json(record: AuditRecord) -> str:
     return json.dumps(data, sort_keys=True, default=str)
 
 
-def compute_hash(prev_hash: Optional[str], record: AuditRecord) -> str:
+def compute_hash(prev_hash: str | None, record: AuditRecord) -> str:
     canonical = _canonical_json(record)
     return hashlib.sha256(((prev_hash or "") + canonical).encode("utf-8")).hexdigest()
 
@@ -27,7 +26,7 @@ def compute_hash(prev_hash: Optional[str], record: AuditRecord) -> str:
 class AuditChain:
     """Owns the running `last_hash` state and appends through a sink."""
 
-    def __init__(self, sink, initial_last_hash: Optional[str] = None) -> None:
+    def __init__(self, sink, initial_last_hash: str | None = None) -> None:
         self._sink = sink
         self._last_hash = initial_last_hash
 
@@ -40,14 +39,14 @@ class AuditChain:
         return record
 
     @property
-    def last_hash(self) -> Optional[str]:
+    def last_hash(self) -> str | None:
         return self._last_hash
 
 
 def verify(records: list[AuditRecord]) -> bool:
     """Walk the chain, recomputing each hash and comparing. Returns False
     on the first mismatch (wrong prev_hash link or a tampered field)."""
-    prev_hash: Optional[str] = None
+    prev_hash: str | None = None
     for record in records:
         if record.prev_hash != prev_hash:
             return False

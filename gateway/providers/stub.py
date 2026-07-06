@@ -7,8 +7,9 @@ import asyncio
 import random
 import time
 
-from providers.base import ProviderAdapter
 from router.contracts import ProviderResponse, RequestContext
+
+from providers.base import ProviderAdapter
 
 
 class StubProviderError(RuntimeError):

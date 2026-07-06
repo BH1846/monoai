@@ -1,184 +1,167 @@
-# monoai-gateway
+# MonoAI Gateway 2.0
 
-A simplified LLM-governance gateway built by wiring together two existing
-libraries as-is:
+A sovereignty-grade AI data firewall: an LLM gateway with reversible PII
+tokenization, declarative policy governance, per-key auth/budgets/rate
+limits, provider fallback chains, streaming, and a tamper-evident audit
+chain.
 
-- **PII layer**: [SENTINEL-2.0](./SENTINEL-2.0) (`pii_pipeline`) — detects,
-  classifies, and reversibly tokenizes PII; owns the vault.
-- **Model-selection layer**: [Lite_Multimodel_switching](./Lite_Multimodel_switching)
-  (`monoai_router`) — normalizes the request, classifies difficulty, and
-  routes to exactly one model per difficulty tier.
+This is **Phase 1 ("Gateway Core")** of a 4-phase build. See
+`monoai-gateway-2.0-master-plan.md` for the full plan and gap register,
+and `DECISIONS.md` for every deviation/simplification made along the way.
 
-`monoai_gateway/` implements a **reduced, 6-step version** of the full
-9-step MonoAI request flow:
+## Phase 1 status — gap register
 
-```
-request → scan/redact PII (SENTINEL) → select model (router) → call LLM
-        → rehydrate PII into response → audit log → return
-```
-
-## Why this exists / ground-truth notes
-
-Both source repos were consumed **as libraries, unmodified internally**.
-Two files were added purely for packaging/config, not logic:
-
-- `SENTINEL-2.0/pyproject.toml` — the repo had no packaging metadata at all
-  (no `setup.py`/`pyproject.toml`), so `pip install -e` wasn't possible
-  until this was added.
-- `SENTINEL-2.0/.env` — pre-existing in the repo; only `VALKEY_PORT` was
-  changed (6379 → 6380) to point at this project's own dedicated Valkey
-  container instead of an unrelated Redis already running on the host's
-  6379.
-
-`Lite_Multimodel_switching/SENTINEL_INTEGRATION_SPEC.md` describes a
-fictional integration (`async SENTINEL.scan()`, `[[EMAIL_001]]` tokens, a
-hand-built `VaultManager`) that **does not exist in the code**. This
-gateway is built against the real `pii_pipeline.Pipeline` API instead —
-see `monoai_gateway/pii.py`.
-
-## Setup
-
-```bash
-# 1. Start Valkey (SENTINEL's vault master-key store — hard dependency,
-#    no on-disk fallback). Runs on 6380 to avoid clashing with any
-#    pre-existing Redis/Valkey on the default 6379.
-VALKEY_PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))") docker compose up -d
-
-# 2. Create a venv and install both source repos editable + the gateway's deps
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ./SENTINEL-2.0 -e ./Lite_Multimodel_switching -r requirements.txt
-
-# 3. Run the server (StubProvider by default — no external calls, no API key)
-uvicorn monoai_gateway.app:app --port 8000
-
-# ...or route to a real cloud model: paste your key into .env (see below),
-# set CLOUD_API_BASE_URL/CLOUD_MODEL_* to whatever vendor+models you want,
-# then:
-MONOAI_PROVIDER=cloud uvicorn monoai_gateway.app:app --port 8000
-
-# 4. Try it
-curl -s -X POST http://127.0.0.1:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"Email me at jane@example.com, say hi."}]}' | python3 -m json.tool
-```
-
-Run the tests (needs Valkey up, same as above):
-
-```bash
-pytest tests/ -v
-```
-
-## Environment variables
-
-| Variable | Owner | Default | Purpose |
-|---|---|---|---|
-| `VALKEY_HOST` / `VALKEY_PORT` / `VALKEY_PASSWORD` / `VALKEY_KEY_NAME` | `pii_pipeline.vault` | from `SENTINEL-2.0/.env` | Vault master-key storage. Hard requirement — `Pipeline()` will not construct without a reachable Valkey. |
-| `PII_VAULT_STORAGE_PATH` | gateway | `./pii_vault.sqlite` | Where the (encrypted) vault entries are persisted on disk. |
-| `PII_USE_ONNX_NER` | gateway | `true` | Use the real ONNX NER model (needs `onnxruntime`+`tokenizers`, in `requirements.txt`) instead of SENTINEL's rule-based fallback. Matters a lot for recall — the fallback's PERSON detector only fires after a capitalized name (misses "my name is deepak", catches "my name is Deepak"). Auto-falls back to rule-based if the model/runtime aren't available. |
-| `MONOAI_PROVIDER` | gateway | `stub` | `stub` (no external calls, for demos/tests), `ollama` (local inference — needs `ollama serve` + pulled models), or `cloud` (any OpenAI-compatible API — see below). |
-| `OLLAMA_BASE_URL` | gateway | `http://localhost:11434` | Only used when `MONOAI_PROVIDER=ollama`. |
-| `CLOUD_API_BASE_URL` / `CLOUD_API_KEY` / `CLOUD_PROVIDER_NAME` | gateway | from `.env` | Only used when `MONOAI_PROVIDER=cloud`. Any vendor speaking the OpenAI chat-completions wire format (Groq, OpenAI, OpenRouter, Together, Fireworks, ...) — see `monoai_gateway/providers.py`. |
-| `CLOUD_MODEL_SIMPLE` / `CLOUD_MODEL_MODERATE` / `CLOUD_MODEL_COMPLEX` | gateway | from `.env` | Which real model each router difficulty tier dispatches to when `MONOAI_PROVIDER=cloud`. |
-| `MONOAI_ROUTER_LOG_PATH` | gateway | `./lite_router_log.jsonl` | `LiteRouter`'s own per-request JSONL log (request_id, difficulty, model_id, latency — no content). |
-| `MONOAI_AUDIT_LOG_PATH` | gateway | `./gateway_audit.jsonl` | This gateway's audit trail (see below). |
-| `MONOAI_BEARER_TOKEN` | gateway | unset (auth disabled) | If set, `POST /v1/chat/completions` requires `Authorization: Bearer <value>`. |
-
-### Using a cloud model (`.env`)
-
-A `.env` file at the repo root (auto-loaded by `monoai_gateway/config.py`;
-real environment variables still take precedence) is where you paste your
-API key and pick which model each difficulty tier routes to:
-
-```bash
-MONOAI_PROVIDER=cloud
-CLOUD_API_BASE_URL=https://api.groq.com/openai/v1   # or OpenAI/OpenRouter/Together/Fireworks/...
-CLOUD_API_KEY=your-key-here
-CLOUD_PROVIDER_NAME=groq
-CLOUD_MODEL_SIMPLE=llama-3.1-8b-instant
-CLOUD_MODEL_MODERATE=llama-3.3-70b-versatile
-CLOUD_MODEL_COMPLEX=qwen/qwen3-32b
-```
-
-`monoai_router`'s dispatcher (`MODEL_BY_DIFFICULTY`, internal to that repo)
-hardcodes Ollama-style tags per tier — `monoai_gateway/providers.py`'s
-`OpenAICompatibleProvider` remaps those tags to whichever real model you
-configured per tier at the provider boundary, so the router itself is
-untouched. Swapping `CLOUD_API_BASE_URL` to any other OpenAI-compatible
-vendor's endpoint (and `CLOUD_MODEL_*` to that vendor's model names) is all
-that's needed to switch providers — no new adapter code.
-
-## The reduced flow, step by step (`monoai_gateway/orchestrator.py`)
-
-1. **Normalize** — the raw payload (OpenAI/Anthropic/Gemini/native) is
-   normalized via `monoai_router`'s `RequestNormalizer`; all message text is
-   collected into one string.
-2. **Scan/redact** — `PiiGuard.sanitize(text)` runs SENTINEL's real
-   `Pipeline.sanitize()` in a worker thread (`asyncio.to_thread`, since
-   it's synchronous). Any `BLOCK`-classified span (credit card, gov ID,
-   secret) rejects the request with HTTP 422 **before** the router or any
-   model ever sees the prompt — BLOCK spans are tokenized into the
-   sanitized prompt but SENTINEL deliberately never vaults them, so they
-   could never be rehydrated back out anyway.
-3. **Select model + call LLM** — the *sanitized* text is routed through
-   `LiteRouter.route()`, which classifies difficulty (simple/moderate/complex,
-   heuristic/regex-based) and dispatches to exactly one model per tier. The
-   provider only ever sees `[PII_TOKEN_xxxx]` placeholders.
-4. **Rehydrate** — `PiiGuard.complete()` restores original values from
-   SENTINEL's vault. If the model dropped or duplicated a placeholder,
-   `Pipeline.complete()` raises `RehydrationReviewRequired`; the gateway
-   catches this and returns best-effort content with
-   `monoai.review_required: true` and `monoai.unresolved_tokens` populated,
-   rather than failing the request.
-5. **Audit** — one JSONL line per request, written via a FastAPI
-   `BackgroundTask` (after the HTTP response is sent) to
-   `MONOAI_AUDIT_LOG_PATH`: `request_id`, `session_id`, `difficulty`,
-   `model_id`, `provider`, `span_counts_by_label`, `redacted_count`,
-   `unresolved_tokens`, `review_required`, and per-stage latencies.
-6. **Return** — an OpenAI-compatible `chat.completion` response, plus a
-   `monoai` extension object with `session_id`/`provider`/`difficulty`/
-   `review_required`/`unresolved_tokens`.
-
-## A known, deliberate simplification
-
-Step 1 collects **all** message text into a single string and sanitizes it
-in **one** `Pipeline.sanitize()` call, then routes it as a single
-synthetic user message. This is because SENTINEL's token IDs
-(`PII_TOKEN_0001`, `0002`, ...) are a **per-call counter** — calling
-`sanitize()` once per message would produce colliding token IDs across
-messages. Multi-turn conversational structure is therefore collapsed for
-the router/LLM call. A production version would need either a
-cross-message token counter inside SENTINEL, or per-message sanitize calls
-sharing one `session_id` with a counter offset passed in.
-
-## What's real vs. stubbed (honest accounting against the 9-step MonoAI flow)
-
-| # | Full MonoAI step | Status here |
+| Gap | What closes it | Proof |
 |---|---|---|
-| 1 | Auth / RBAC | **Stubbed** — single optional bearer token (`MONOAI_BEARER_TOKEN`), no RBAC, no per-key identity. |
-| 2 | Policy engine | **Omitted** — no policy evaluation beyond SENTINEL's fixed BLOCK/REVERSIBLE/PRESERVE label policy. |
-| 3 | Semantic / exact cache | **Omitted.** |
-| 4 | Budget enforcement | **Omitted** — usage is returned in the response but nothing is metered or capped. |
-| 5 | **PII scan/redact** | **Real** — SENTINEL-2.0's actual `Pipeline.sanitize()`/`complete()`, real vault, real Valkey-backed master key, real ONNX NER model (`PII_USE_ONNX_NER=true`, the default — see below). |
-| 6 | **Model selection/routing** | **Real** — `monoai_router`'s actual `LiteRouter` (normalizer → heuristic difficulty classifier → dispatcher → provider). |
-| 7 | LLM call | **Real for the provider it calls** — `StubProvider` (default, no external calls), `OllamaProvider` (local inference, via `MONOAI_PROVIDER=ollama`), or any OpenAI-compatible cloud API (Groq/OpenAI/OpenRouter/Together/Fireworks/...) via `MONOAI_PROVIDER=cloud` + `.env` (gateway-side `OpenAICompatibleProvider`, `monoai_gateway/providers.py`). |
-| 8 | Streaming | **Omitted** — `stream` is accepted in normalized payloads but ignored; responses are always whole. |
-| 9 | Response-side re-scan / prompt-injection defenses | **Omitted** beyond what SENTINEL's redaction already does on the way in; no scan of the model's raw output before rehydration. |
-| — | Postgres / vector store | **Omitted** — audit trail is an append-only JSONL file, not a queryable store. |
-| — | **Rehydration + audit** | **Real** — see steps 4–5 above. |
+| G1 (streaming) | `gateway/streaming.py` sliding-window rehydrator | `tests/integration/test_streaming.py` |
+| G2 (per-key auth) | `gateway/auth/` virtual keys, budgets, rate limits | `tests/integration/test_auth.py` |
+| G3 (policy) | `core/policy/` declarative YAML engine | `tests/integration/test_policy.py` |
+| G5 (output scan) | `PiiEngine.scan_output` before rehydration | `tests/integration/test_output_scan.py` |
+| G6 (fallback) | `gateway/providers/fallback_chain.py` + circuit breaker | `tests/integration/test_fallback.py` |
+| G8 (multi-turn) | `core/vault/session_tokens.py` value-deterministic tokens | `tests/integration/test_multiturn.py` |
+| G14 (secrets hygiene) | gitignored `.env`, CI gitleaks job | `tests/unit/test_repo_hygiene.py` |
+
+G4/G7/G9-G13/G15/G16 (injection detection, embedding router, observability,
+tamper-evident signing, Postgres backends, Gulf/Arabic pack, benchmarks,
+file scanning, MCP firewall) are Phase 2-4 — see the placeholder
+`README.md` in `ner-sidecar/`, `filescan-worker/`, `mcp-firewall/`, `bench/`,
+and `core/detect/packs/gulf_ar/`.
+
+## Quickstart
+
+```bash
+git clone <this-repo> && cd monoai
+cp .env.example .env
+# Generate real secrets for VALKEY_PASSWORD, SESSION_TOKEN_SECRET, MONOAI_ADMIN_KEY:
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"   # run 3x, paste into .env
+
+make up          # starts Valkey (docker compose)
+uv sync --all-packages
+uv run uvicorn app:app --app-dir gateway --port 8000
+```
+
+`MONOAI_PROVIDER` defaults to `stub` (no external calls, no API key needed —
+good for a first run). Create a virtual key and send a request:
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/v1/admin/keys \
+  -H "Authorization: Bearer $MONOAI_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"team_id": "demo", "policy_id": "default"}'
+# -> {"key": "mk-...", "key_id": "vk_...", ...}
+
+curl -s -X POST http://127.0.0.1:8000/v1/chat/completions \
+  -H "Authorization: Bearer mk-..." \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"Email me at jane@example.com about the invoice"}]}' \
+  | python3 -m json.tool
+```
+
+The response's `monoai.sanitized_prompt` shows the email replaced with a
+`[PII_TOKEN_xxxxxxxxxx]` placeholder before it ever reached the model; the
+top-level `choices[0].message.content` has the real email restored. Try
+`"stream": true` in the request body for the SSE streaming path.
+
+Run the test suite:
+
+```bash
+make test        # == uv run pytest tests/
+```
+
+## Architecture
+
+```
+request → auth (virtual key, budget, rate limit, model allowlist)
+        → policy load (per-key policy_id)
+        → sanitize (role-preserving, per message; core/detect + core/policy + core/vault)
+        → BLOCK span present? → 422, audited, never reaches the router/LLM
+        → route (heuristic difficulty classifier) → provider fallback chain
+        → output-scan (catches PII the model leaked, never in the prompt)
+        → rehydrate (restore original values for REVERSIBLE tokens)
+        → audit (hash-chained record, off the response path)
+        → response (or SSE stream)
+```
+
+`core/` is a dependency-free-of-service-code shared library (detection,
+policy, vault, audit) usable by future surfaces (file scanning, MCP tool
+args) without duplicating logic. `gateway/` is the FastAPI service.
 
 ## Repo layout
 
 ```
-monoai_gateway/
-  config.py         # env-driven settings (loads repo-root .env)
-  pii.py             # async wrapper over pii_pipeline.Pipeline
-  orchestrator.py    # the reduced flow
-  audit.py           # append-only JSONL audit log
-  providers.py        # OpenAICompatibleProvider (any cloud vendor via .env)
-  app.py             # FastAPI: POST /v1/chat/completions, GET /health
-tests/
-  test_orchestrator.py   # end-to-end: real Pipeline + StubProvider
-.env                       # API keys / cloud model choices (paste yours here)
-docker-compose.yml        # dedicated Valkey for local dev
-requirements.txt
+core/
+  contracts/     pydantic v2 models: spans, policy decisions, scan requests, audit records
+  detect/        DetectionPipeline: regex + secrets + NER (ONNX or rule-based fallback) +
+                 span repair + locked-span negation handling + span merge
+  policy/        YAML policy engine (label -> action), content-hash versioned
+  vault/         AES-256-GCM + sealed-box envelope encryption, session-deterministic tokens,
+                 pluggable storage (SQLite now, Postgres stub for Phase 2)
+  audit/         hash-chained records, JSONL sink, evidence export
+gateway/
+  api/           chat, health, evidence, admin (key/policy CRUD), files (Phase 3 stub)
+  auth/          virtual keys, token-bucket rate limiter, budget checks
+  providers/     OpenAI-compatible / Ollama / stub adapters, circuit breaker, fallback chain
+  router/        request normalizer (4 wire formats) + heuristic difficulty classifier
+  pii.py         role-preserving sanitize / output-scan / rehydrate glue
+  orchestrator.py the 6-step request spine
+  streaming.py   SSE sliding-window rehydrator
+policies/        default.yaml, finance_strict.yaml, gulf_sovereign.yaml (Phase 1 stub)
+tests/           unit/ integration/ adversarial/ e2e/
+scripts/         verify_audit_chain.py — standalone verifier to hand to auditors
 ```
+
+## Environment variables
+
+See `.env.example` for the full, documented list. Everything needed to run
+locally has a default except the three secrets you must generate
+(`VALKEY_PASSWORD`, `SESSION_TOKEN_SECRET`, `MONOAI_ADMIN_KEY`) and, if you
+want real model calls, `MONOAI_PROVIDER=cloud` + `CLOUD_API_*`.
+
+## Auditing
+
+Every request writes one hash-chained record to `MONOAI_AUDIT_LOG_PATH`
+(`./gateway_audit.jsonl` by default) — labels and counts only, never raw
+values. Verify the chain independently:
+
+```bash
+uv run python scripts/verify_audit_chain.py gateway_audit.jsonl
+```
+
+`GET /v1/evidence/export` returns the same chain as a downloadable bundle
+(unsigned in Phase 1 — Ed25519 signing is Phase 2, see `DECISIONS.md`).
+
+## Development
+
+```bash
+make lint         # ruff
+make typecheck     # mypy --strict on core/ and gateway/
+make test          # full pytest suite
+```
+
+Porting reference (SENTINEL-2.0 / Lite_Multimodel_switching source this
+was built from) lives outside this repo at `../monoai-port-reference/` —
+see `DECISIONS.md` for why.
+
+Phase 1 — Gateway Core: done (all 7 gaps closed, 175 tests green)
+Gap	Status	Proof
+G1 streaming	✅ closed	test_streaming.py — sliding-window rehydrator, token-split-across-chunks + TTFB tests pass
+G2 per-key auth	✅ closed	test_auth.py — virtual keys, budgets, rate limits, model allowlist all pass
+G3 policy	✅ closed	test_policy.py — declarative YAML engine, same prompt/two policies/two outcomes
+G5 output scan	✅ closed	test_output_scan.py — model-leaked SSN redacted before it reaches the client
+G6 fallback/circuit breaker	✅ closed	test_fallback.py — primary→secondary, all-down→503, breaker opens after N failures
+G8 multi-turn	✅ closed	test_multiturn.py — same email→same token across turns, roles preserved to provider
+G14 secrets hygiene	✅ closed	test_repo_hygiene.py + CI gitleaks job; Valkey password rotated, .env.example clean
+Plus the carried-forward 7-test regression suite and the adversarial rehydration-safety property test (BLOCK values never leak) — all passing. Verified live end-to-end against real Valkey (not just mocked): health checks, key creation, streaming/non-streaming chat, BLOCK rejection, rate limiting, and audit-chain continuity across a real server restart.
+
+Found and fixed 4 real bugs during live testing (not just unit tests) that unit tests alone hadn't caught — difficulty-classifier token inflation, ONNX NER false positives on token brackets and small streaming windows, an off-by-one in the streaming split logic, and audit-chain resume across restarts. Each has a dedicated regression test now.
+
+Phase 2 — Detection depth (G4, G7, G9, G10, G11, G12, G15): not started
+No ner-sidecar, injection detection, Gulf/Arabic pack, embedding router, OTel/Prometheus, Ed25519 signing, Postgres backends, or bench/ harness. Placeholder dirs with .gitkeep + README only.
+
+Phase 3 — File/media scanning (G16): not started
+filescan-worker/ is an empty placeholder; POST /v1/files/scan returns 501.
+
+Phase 4 — MCP firewall (G13): not started
+mcp-firewall/ is an empty placeholder.
+
+

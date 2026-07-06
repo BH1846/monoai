@@ -2,7 +2,7 @@
 prod — see DECISIONS.md for the Phase 1 SQLite-first choice)."""
 from __future__ import annotations
 
-from typing import Optional, Protocol
+from typing import Protocol
 
 
 class VaultStore(Protocol):
@@ -13,7 +13,7 @@ class VaultStore(Protocol):
         before the durable write lands."""
         ...
 
-    def get(self, session_id: str, token_id: str) -> Optional[str]:
+    def get(self, session_id: str, token_id: str) -> str | None:
         ...
 
     def close(self) -> None:

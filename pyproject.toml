@@ -23,11 +23,16 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.ruff]
-line-length = 110
+line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+# UP042/UP047: str+Enum -> StrEnum, generic function syntax -- valid
+# Python 3.12 idioms, but StrEnum has subtly different str()/repr()
+# behavior that could affect pydantic JSON serialization; left as a
+# deliberate style choice for a dedicated pass, not a Phase 1 blocker.
+ignore = ["UP042", "UP047"]
 
 [tool.mypy]
 python_version = "3.12"

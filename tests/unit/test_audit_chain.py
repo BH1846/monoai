@@ -1,5 +1,5 @@
-from contracts.audit import AuditRecord
 from audit.chain import AuditChain, verify
+from contracts.audit import AuditRecord
 
 
 class _MemorySink:

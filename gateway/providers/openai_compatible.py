@@ -13,9 +13,9 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from router.contracts import ProviderResponse, RequestContext
 
 from providers.base import ProviderAdapter
-from router.contracts import ProviderResponse, RequestContext
 
 
 @dataclass(frozen=True)

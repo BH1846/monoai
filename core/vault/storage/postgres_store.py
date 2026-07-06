@@ -6,8 +6,6 @@ key storage in Phase 1).
 """
 from __future__ import annotations
 
-from typing import Optional
-
 
 class PostgresVaultStore:
     def __init__(self, *args, **kwargs) -> None:
@@ -16,7 +14,7 @@ class PostgresVaultStore:
     def write_async(self, session_id: str, token_id: str, plaintext: str) -> None:
         raise NotImplementedError("postgres vault backend is Phase 2 — see DECISIONS.md")
 
-    def get(self, session_id: str, token_id: str) -> Optional[str]:
+    def get(self, session_id: str, token_id: str) -> str | None:
         raise NotImplementedError("postgres vault backend is Phase 2 — see DECISIONS.md")
 
     def close(self) -> None:

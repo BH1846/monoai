@@ -18,7 +18,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from audit.chain import AuditChain
 from contracts.audit import AuditRecord
@@ -45,9 +45,9 @@ class ChatResult:
     content: str
     model_id: str
     provider: str
-    difficulty: Optional[str]
+    difficulty: str | None
     usage: dict
-    cost_usd: Optional[float]
+    cost_usd: float | None
     unresolved_tokens: list
     review_required: bool
     policy_id: str
@@ -64,8 +64,8 @@ class Prepared:
     request_id: str
     session_id: str
     policy: Policy
-    virtual_key_id: Optional[str]
-    team_id: Optional[str]
+    virtual_key_id: str | None
+    team_id: str | None
     sanitize_result: SanitizeResult
     sanitized_prompt: str
     difficulty: str
@@ -97,9 +97,9 @@ class Orchestrator:
         self,
         raw_payload: dict[str, Any],
         policy_id: str = "default",
-        virtual_key_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        virtual_key_id: str | None = None,
+        team_id: str | None = None,
+        session_id: str | None = None,
     ) -> Prepared:
         request_id = str(uuid.uuid4())
         t_start = time.monotonic()
@@ -161,9 +161,9 @@ class Orchestrator:
         self,
         raw_payload: dict[str, Any],
         policy_id: str = "default",
-        virtual_key_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        virtual_key_id: str | None = None,
+        team_id: str | None = None,
+        session_id: str | None = None,
     ) -> ChatResult:
         p = await self.prepare_dispatch(raw_payload, policy_id, virtual_key_id, team_id, session_id)
 
@@ -189,7 +189,7 @@ class Orchestrator:
         review_required: bool,
         output_scan_ms: float,
         pii_rehydrate_ms: float,
-        ttfb_ms: Optional[float] = None,
+        ttfb_ms: float | None = None,
     ) -> ChatResult:
         return self._finalize(
             prepared, final_text, unresolved, review_required, output_scan_ms, pii_rehydrate_ms,
@@ -205,7 +205,7 @@ class Orchestrator:
         output_scan_ms: float,
         pii_rehydrate_ms: float,
         stream: bool = False,
-        ttfb_ms: Optional[float] = None,
+        ttfb_ms: float | None = None,
     ) -> ChatResult:
         total_ms = (time.monotonic() - p.t_start) * 1000.0
         provider = p.fb_result.route.provider

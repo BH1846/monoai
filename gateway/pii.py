@@ -65,7 +65,9 @@ class PiiEngine:
         return derive_session_key(session_id, self._server_secret)
 
     def sanitize_messages(self, messages: list[Any], session_id: str, policy: Policy) -> SanitizeResult:
-        from router.contracts import Message  # local import avoids a hard gateway<->router cycle at module load
+        from router.contracts import (
+            Message,  # local import avoids a hard gateway<->router cycle at module load
+        )
 
         session_key = self._session_key(session_id)
         sanitized_messages: list[Message] = []

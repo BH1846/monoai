@@ -1,5 +1,4 @@
 import pytest
-
 from vault.crypto import VaultCrypto
 
 

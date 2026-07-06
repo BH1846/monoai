@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from contracts.policy import Action, PolicyDecision
 from contracts.spans import DetectedSpan
+
 from policy.schema import Policy
 
 

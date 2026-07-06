@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from pii import PiiEngine
 from policy.schema import Policy

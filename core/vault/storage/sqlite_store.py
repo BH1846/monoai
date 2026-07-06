@@ -11,7 +11,6 @@ import sqlite3
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Optional
 
 from vault.crypto import VaultCrypto
 
@@ -57,7 +56,7 @@ class SqliteVaultStore:
             )
             self._conn.commit()
 
-    def get(self, session_id: str, token_id: str) -> Optional[str]:
+    def get(self, session_id: str, token_id: str) -> str | None:
         with self._cache_lock:
             cached = self._cache.get((session_id, token_id))
         if cached is not None:
@@ -77,7 +76,7 @@ class SqliteVaultStore:
             self._cache[(session_id, token_id)] = plaintext
         return plaintext
 
-    def flush(self, timeout: Optional[float] = None) -> None:
+    def flush(self, timeout: float | None = None) -> None:
         """Block until all pending async writes land. Test/eval use only."""
         for future in self._pending:
             future.result(timeout=timeout)

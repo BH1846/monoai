@@ -9,7 +9,6 @@ import json
 import random
 
 import pytest
-
 from audit.chain import AuditChain
 from audit.sinks import JsonlSink
 from detect.pipeline import DetectionPipeline

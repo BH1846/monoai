@@ -1,6 +1,6 @@
-from contracts.audit import AuditRecord
 from audit.chain import AuditChain, verify
 from audit.sinks import JsonlSink, read_jsonl, read_last_hash
+from contracts.audit import AuditRecord
 
 
 def _record(request_id: str) -> AuditRecord:
