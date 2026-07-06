@@ -22,10 +22,13 @@ from typing import Any
 
 from audit.chain import AuditChain
 from contracts.audit import AuditRecord
+from obs.metrics import REQUEST_DURATION_SECONDS
+from obs.tracing import stage_span
 from pii import BlockedContentError, PiiEngine, SanitizeResult
 from policy.schema import Policy
 from policy.store import PolicyStore
 from providers.fallback_chain import AllProvidersDownError, FallbackChain, FallbackResult
+from router.embedding_classifier import EmbeddingRouterClassifier, classify_difficulty_cascade
 from router.heuristic import classify_difficulty
 from router.normalizer import RequestNormalizer
 
@@ -84,6 +87,7 @@ class Orchestrator:
         audit_chain: AuditChain,
         detector_versions: dict[str, str],
         pack_versions: dict[str, str],
+        embedding_classifier: EmbeddingRouterClassifier | None = None,
     ) -> None:
         self._pii = pii
         self._policy_store = policy_store
@@ -92,6 +96,7 @@ class Orchestrator:
         self._normalizer = RequestNormalizer()
         self._detector_versions = detector_versions
         self._pack_versions = pack_versions
+        self._embedding_classifier = embedding_classifier or EmbeddingRouterClassifier.load()
 
     async def prepare_dispatch(
         self,
@@ -110,7 +115,8 @@ class Orchestrator:
 
         t0 = time.monotonic()
         try:
-            sanitize_result = self._pii.sanitize_messages(ctx.messages, session_id, policy)
+            with stage_span("sanitize", request_id=request_id, session_id=session_id, policy_id=policy.policy_id):
+                sanitize_result = self._pii.sanitize_messages(ctx.messages, session_id, policy)
         except BlockedContentError as err:
             pii_sanitize_ms = (time.monotonic() - t0) * 1000.0
             record = AuditRecord(
@@ -125,14 +131,18 @@ class Orchestrator:
             err.audit_record = record
             raise
         pii_sanitize_ms = (time.monotonic() - t0) * 1000.0
+        REQUEST_DURATION_SECONDS.labels(stage="sanitize").observe(pii_sanitize_ms / 1000.0)
 
         sanitized_ctx = ctx.model_copy(update={"messages": sanitize_result.messages})
         sanitized_prompt = "\n".join(m.content for m in sanitize_result.messages if isinstance(m.content, str))
-        difficulty = classify_difficulty(self._pii.strip_tokens_for_classification(sanitized_prompt))
+        classification_text = self._pii.strip_tokens_for_classification(sanitized_prompt)
+        heuristic_difficulty = classify_difficulty(classification_text)
+        difficulty = classify_difficulty_cascade(classification_text, heuristic_difficulty, self._embedding_classifier)
 
         t1 = time.monotonic()
         try:
-            fb_result = await self._fallback_chain.dispatch(request_id, difficulty, sanitized_ctx)
+            with stage_span("route", request_id=request_id, difficulty=difficulty):
+                fb_result = await self._fallback_chain.dispatch(request_id, difficulty, sanitized_ctx)
         except AllProvidersDownError as err:
             router_ms = (time.monotonic() - t1) * 1000.0
             record = AuditRecord(
@@ -148,6 +158,7 @@ class Orchestrator:
             self._audit_chain.append(record)
             raise ProviderFailureError(err.tier, session_id, record) from err
         router_ms = (time.monotonic() - t1) * 1000.0
+        REQUEST_DURATION_SECONDS.labels(stage="route").observe(router_ms / 1000.0)
 
         return Prepared(
             request_id=request_id, session_id=session_id, policy=policy,
@@ -168,16 +179,20 @@ class Orchestrator:
         p = await self.prepare_dispatch(raw_payload, policy_id, virtual_key_id, team_id, session_id)
 
         t2 = time.monotonic()
-        output_text, output_token_ids = self._pii.scan_output(
-            p.fb_result.response.content, p.session_id, p.policy
-        )
+        with stage_span("output_scan", request_id=p.request_id, session_id=p.session_id):
+            output_text, output_token_ids = self._pii.scan_output(
+                p.fb_result.response.content, p.session_id, p.policy
+            )
         output_scan_ms = (time.monotonic() - t2) * 1000.0
+        REQUEST_DURATION_SECONDS.labels(stage="output_scan").observe(output_scan_ms / 1000.0)
 
         t3 = time.monotonic()
-        final_text, unresolved, review_required = self._pii.rehydrate(
-            output_text, p.session_id, p.sanitize_result.token_ids, output_token_ids
-        )
+        with stage_span("rehydrate", request_id=p.request_id, session_id=p.session_id):
+            final_text, unresolved, review_required = self._pii.rehydrate(
+                output_text, p.session_id, p.sanitize_result.token_ids, output_token_ids
+            )
         pii_rehydrate_ms = (time.monotonic() - t3) * 1000.0
+        REQUEST_DURATION_SECONDS.labels(stage="rehydrate").observe(pii_rehydrate_ms / 1000.0)
 
         return self._finalize(p, final_text, unresolved, review_required, output_scan_ms, pii_rehydrate_ms)
 
@@ -226,7 +241,9 @@ class Orchestrator:
             total_ms=round(total_ms, 3), usage=p.fb_result.response.usage, cost_usd=cost_usd,
             stream=stream, ttfb_ms=ttfb_ms,
         )
-        self._audit_chain.append(record)
+        with stage_span("audit", request_id=p.request_id, session_id=p.session_id):
+            self._audit_chain.append(record)
+        REQUEST_DURATION_SECONDS.labels(stage="total").observe(total_ms / 1000.0)
 
         return ChatResult(
             request_id=p.request_id, session_id=p.session_id, content=final_text,

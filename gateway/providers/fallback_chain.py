@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from router.contracts import ProviderResponse, RequestContext
 
+from obs.tracing import stage_span
 from providers.base import ProviderAdapter
 from providers.circuit_breaker import CircuitBreaker
 from providers.retry import is_retryable, retry_with_backoff
@@ -71,7 +72,11 @@ class FallbackChain:
                 return await route.provider.complete(request_id, route.model_id, ctx)
 
             try:
-                response = await retry_with_backoff(_call, max_retries=self._max_retries_per_route)
+                with stage_span(
+                    "provider", request_id=request_id, attempt=position,
+                    provider_name=route.provider_name, model_id=route.model_id,
+                ):
+                    response = await retry_with_backoff(_call, max_retries=self._max_retries_per_route)
             except Exception as exc:
                 last_exc = exc
                 if not is_retryable(exc):

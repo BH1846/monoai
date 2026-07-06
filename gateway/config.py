@@ -42,9 +42,18 @@ def _env_list(name: str, default: list[str]) -> list[str]:
 @dataclass
 class Settings:
     # -- vault / detection --
+    vault_backend: str = field(default_factory=lambda: os.environ.get("VAULT_BACKEND", "sqlite"))
     vault_storage_path: str = field(default_factory=lambda: os.environ.get("PII_VAULT_STORAGE_PATH", "./pii_vault.sqlite"))
+    vault_postgres_dsn: str | None = field(default_factory=lambda: os.environ.get("VAULT_POSTGRES_DSN") or None)
+    vault_ttl_s: float | None = field(default_factory=lambda: float(v) if (v := os.environ.get("VAULT_TTL_S")) else None)
     pii_use_onnx_ner: bool = field(default_factory=lambda: _env_bool("PII_USE_ONNX_NER", True))
     session_token_secret: str = field(default_factory=lambda: os.environ.get("SESSION_TOKEN_SECRET", "dev-only-insecure-secret"))
+
+    # -- audit sink (G10): jsonl (default) | postgres | webhook --
+    audit_sink: str = field(default_factory=lambda: os.environ.get("AUDIT_SINK", "jsonl"))
+    audit_postgres_dsn: str | None = field(default_factory=lambda: os.environ.get("AUDIT_POSTGRES_DSN") or None)
+    audit_webhook_url: str | None = field(default_factory=lambda: os.environ.get("AUDIT_WEBHOOK_URL") or None)
+    audit_signing_key_name: str = field(default_factory=lambda: os.environ.get("AUDIT_SIGNING_KEY_NAME", "monoai:audit:signing_key"))
 
     # -- valkey (vault master key + rate limiter) --
     valkey_host: str = field(default_factory=lambda: os.environ.get("VALKEY_HOST", "127.0.0.1"))

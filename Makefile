@@ -20,4 +20,4 @@ verify-audit-chain:
 	uv run python scripts/verify_audit_chain.py
 
 bench:
-	@echo "bench harness lands in Phase 2 — see bench/README.md"
+	uv run python bench/run_all.py

@@ -1,9 +1,11 @@
-"""Audit sinks: jsonl (real) | postgres | webhook (Phase 2 stubs)."""
+"""Audit sinks: jsonl | postgres | webhook (SIEM)."""
 from __future__ import annotations
 
 import os
 from pathlib import Path
 from typing import Protocol
+
+import httpx
 
 from contracts.audit import AuditRecord
 
@@ -58,17 +60,66 @@ def read_last_hash(path: str) -> str | None:
     return last_hash
 
 
+_PG_SCHEMA = """
+CREATE TABLE IF NOT EXISTS {table} (
+    record_id TEXT PRIMARY KEY,
+    ts DOUBLE PRECISION NOT NULL,
+    request_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    event TEXT NOT NULL,
+    prev_hash TEXT,
+    hash TEXT,
+    data JSONB NOT NULL
+)
+"""
+
+
 class PostgresSink:
-    def __init__(self, *args, **kwargs) -> None:
-        raise NotImplementedError("postgres audit sink is Phase 2 — see DECISIONS.md")
+    """Sync (psycopg3, not asyncpg -- see DECISIONS.md): AuditSink.write()
+    is a synchronous protocol method used from within already-async
+    orchestrator code without an `await`; switching to asyncpg would
+    require threading async/await through AuditChain.append and every
+    call site, a wider refactor not worth it for Phase 2's scope."""
+
+    def __init__(self, dsn: str, table: str = "audit_records") -> None:
+        import psycopg
+
+        self._table = table
+        self._conn = psycopg.connect(dsn, autocommit=True)
+        self._conn.execute(_PG_SCHEMA.format(table=table))
 
     def write(self, record: AuditRecord) -> None:
-        raise NotImplementedError("postgres audit sink is Phase 2 — see DECISIONS.md")
+        self._conn.execute(
+            f"INSERT INTO {self._table} "
+            "(record_id, ts, request_id, session_id, event, prev_hash, hash, data) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                record.record_id, record.ts, record.request_id, record.session_id, record.event,
+                record.prev_hash, record.hash, record.model_dump_json(),
+            ),
+        )
+
+    def read_all(self) -> list[AuditRecord]:
+        rows = self._conn.execute(f"SELECT data FROM {self._table} ORDER BY ts ASC").fetchall()
+        return [AuditRecord.model_validate_json(row[0]) for row in rows]
+
+    def close(self) -> None:
+        self._conn.close()
 
 
 class WebhookSink:
-    def __init__(self, *args, **kwargs) -> None:
-        raise NotImplementedError("webhook (SIEM) audit sink is Phase 2 — see DECISIONS.md")
+    """Fail-open (invariant #3): a SIEM/webhook delivery failure never
+    raises -- it must not affect the data path."""
+
+    def __init__(self, url: str, timeout: float = 5.0) -> None:
+        self._url = url
+        self._client = httpx.Client(timeout=timeout)
 
     def write(self, record: AuditRecord) -> None:
-        raise NotImplementedError("webhook (SIEM) audit sink is Phase 2 — see DECISIONS.md")
+        try:
+            self._client.post(self._url, json=record.model_dump(mode="json"))
+        except httpx.HTTPError:
+            pass
+
+    def close(self) -> None:
+        self._client.close()

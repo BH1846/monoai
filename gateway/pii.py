@@ -16,6 +16,8 @@ from typing import Any
 from contracts.policy import Action
 from contracts.spans import TextUnit, TextUnitLocator
 from detect.pipeline import DetectionPipeline
+from detect.stages.injection_stage import InjectionDetector
+from obs.metrics import FINDINGS_TOTAL, INJECTION_FLAGGED_TOTAL
 from policy.engine import evaluate
 from policy.schema import Policy
 from vault.session_tokens import TOKEN_PREFIX, derive_session_key, make_token_id
@@ -56,10 +58,17 @@ class SanitizeResult:
 
 
 class PiiEngine:
-    def __init__(self, pipeline: DetectionPipeline, vault: VaultStore, server_secret: str) -> None:
+    def __init__(
+        self,
+        pipeline: DetectionPipeline,
+        vault: VaultStore,
+        server_secret: str,
+        injection_detector: InjectionDetector | None = None,
+    ) -> None:
         self._pipeline = pipeline
         self._vault = vault
         self._server_secret = server_secret
+        self._injection_detector = injection_detector or InjectionDetector.load()
 
     def _session_key(self, session_id: str) -> bytes:
         return derive_session_key(session_id, self._server_secret)
@@ -81,6 +90,15 @@ class PiiEngine:
                 sanitized_messages.append(msg)
                 continue
 
+            if policy.injection.enabled:
+                injection_result = self._injection_detector.detect(msg.content, threshold=policy.injection.threshold)
+                if injection_result.is_injection:
+                    INJECTION_FLAGGED_TOTAL.labels(action=policy.injection.action).inc()
+                    span_counts["PROMPT_INJECTION"] = span_counts.get("PROMPT_INJECTION", 0) + 1
+                    if policy.injection.action == "BLOCK":
+                        blocked_labels.add("PROMPT_INJECTION")
+                        continue  # don't bother tokenizing content we're about to reject wholesale
+
             unit = TextUnit(
                 unit_id=f"m{turn_index}", role=msg.role, text=msg.content,
                 locator=TextUnitLocator(surface="chat_message", path=f"messages[{turn_index}].content"),
@@ -91,6 +109,7 @@ class PiiEngine:
 
             for d in decisions:
                 span_counts[d.span.label.value] = span_counts.get(d.span.label.value, 0) + 1
+                FINDINGS_TOTAL.labels(label=d.span.label.value, action=d.action.value).inc()
                 if d.action == Action.BLOCK:
                     blocked_labels.add(d.span.label.value)
 
@@ -159,6 +178,7 @@ class PiiEngine:
             span = d.span
             if span.start < last_end:
                 continue
+            FINDINGS_TOTAL.labels(label=span.label.value, action=d.action.value).inc()
             out.append(text[last_end:span.start])
             if d.action == Action.BLOCK:
                 out.append(f"[REDACTED_OUTPUT_{span.label.value}]")

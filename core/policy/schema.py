@@ -27,6 +27,14 @@ class OutputScanConfig(BaseModel):
     reuse_input_rules: bool = True
 
 
+class InjectionPolicyConfig(BaseModel):
+    """G4: prompt-injection detection. Disabled by default so existing
+    policies (and Phase 1 tests) are unaffected unless a policy opts in."""
+    enabled: bool = False
+    threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    action: str = Field(default="BLOCK", pattern="^(BLOCK|FLAG)$")
+
+
 class Policy(BaseModel):
     policy_id: str
     description: str = ""
@@ -37,4 +45,5 @@ class Policy(BaseModel):
     token_budget_mode: bool = False
     compressible_length_threshold: int = 20
     output_scan: OutputScanConfig = Field(default_factory=OutputScanConfig)
+    injection: InjectionPolicyConfig = Field(default_factory=InjectionPolicyConfig)
     version: str = ""

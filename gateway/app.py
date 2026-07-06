@@ -9,7 +9,8 @@ from contextlib import asynccontextmanager
 
 import redis
 from audit.chain import AuditChain
-from audit.sinks import JsonlSink, read_last_hash
+from audit.sinks import JsonlSink, PostgresSink, WebhookSink, read_last_hash
+from audit.signing import load_or_create_signing_key
 from auth.middleware import register_auth_exception_handlers
 from auth.rate_limit import TokenBucketRateLimiter
 from auth.store import SqliteKeyStore
@@ -25,6 +26,8 @@ from providers.ollama import OllamaProvider
 from providers.openai_compatible import CloudRoute, OpenAICompatibleProvider
 from providers.stub import StubProvider
 from vault.crypto import VaultCrypto
+from vault.storage.base import VaultStore
+from vault.storage.postgres_store import PostgresVaultStore
 from vault.storage.sqlite_store import SqliteVaultStore
 
 DETECTOR_VERSIONS = {"regex": "base_en-v1", "secrets": "base_en-v1", "ner": "base_en-v1", "locked_span": "base_en-v1"}
@@ -56,6 +59,26 @@ def _build_provider(settings: Settings) -> ProviderAdapter:
     raise ValueError(f"unknown MONOAI_PROVIDER: {settings.provider!r} (expected 'stub', 'ollama', or 'cloud')")
 
 
+def _build_vault_store(settings: Settings, vault_crypto: VaultCrypto) -> VaultStore:
+    if settings.vault_backend == "postgres":
+        if not settings.vault_postgres_dsn:
+            raise ValueError("VAULT_BACKEND=postgres requires VAULT_POSTGRES_DSN")
+        return PostgresVaultStore(vault_crypto, settings.vault_postgres_dsn, default_ttl_s=settings.vault_ttl_s)
+    return SqliteVaultStore(vault_crypto, storage_path=settings.vault_storage_path, default_ttl_s=settings.vault_ttl_s)
+
+
+def _build_audit_sink(settings: Settings):
+    if settings.audit_sink == "postgres":
+        if not settings.audit_postgres_dsn:
+            raise ValueError("AUDIT_SINK=postgres requires AUDIT_POSTGRES_DSN")
+        return PostgresSink(settings.audit_postgres_dsn)
+    if settings.audit_sink == "webhook":
+        if not settings.audit_webhook_url:
+            raise ValueError("AUDIT_SINK=webhook requires AUDIT_WEBHOOK_URL")
+        return WebhookSink(settings.audit_webhook_url)
+    return JsonlSink(settings.audit_log_path)
+
+
 def _build_fallback_chain(settings: Settings, provider: ProviderAdapter) -> FallbackChain:
     routes_by_tier = {
         tier: [Route(provider=provider, model_id=tier, provider_name=settings.provider)]
@@ -77,7 +100,7 @@ async def lifespan(app: FastAPI):
 
     pipeline = DetectionPipeline(use_onnx_ner=settings.pii_use_onnx_ner)
     vault_crypto = VaultCrypto(valkey_client, key_name=settings.valkey_key_name)
-    vault_store = SqliteVaultStore(vault_crypto, storage_path=settings.vault_storage_path)
+    vault_store = _build_vault_store(settings, vault_crypto)
     pii = PiiEngine(pipeline, vault_store, settings.session_token_secret)
 
     policy_store = PolicyStore()
@@ -86,13 +109,20 @@ async def lifespan(app: FastAPI):
     key_store = SqliteKeyStore(storage_path=settings.key_store_path)
     rate_limiter = TokenBucketRateLimiter(valkey_client)
 
+    audit_sink = _build_audit_sink(settings)
     # Resume the chain from the existing log's last hash, if any -- a
     # fresh AuditChain(initial_last_hash=None) after a process restart
     # would otherwise write prev_hash=None into a record appended after
     # real prior history, breaking the chain at every restart.
-    audit_chain = AuditChain(
-        JsonlSink(settings.audit_log_path), initial_last_hash=read_last_hash(settings.audit_log_path)
-    )
+    initial_last_hash = None
+    if isinstance(audit_sink, JsonlSink):
+        initial_last_hash = read_last_hash(settings.audit_log_path)
+    elif isinstance(audit_sink, PostgresSink):
+        existing = audit_sink.read_all()
+        initial_last_hash = existing[-1].hash if existing else None
+    audit_chain = AuditChain(audit_sink, initial_last_hash=initial_last_hash)
+
+    signing_key = load_or_create_signing_key(valkey_client, key_name=settings.audit_signing_key_name)
 
     provider = _build_provider(settings)
     fallback_chain = _build_fallback_chain(settings, provider)
@@ -101,6 +131,7 @@ async def lifespan(app: FastAPI):
 
     app.state.settings = settings
     app.state.pii = pii
+    app.state.vault_store = vault_store
     app.state.policy_store = policy_store
     app.state.key_store = key_store
     app.state.rate_limiter = rate_limiter
@@ -108,6 +139,7 @@ async def lifespan(app: FastAPI):
     app.state.orchestrator = orchestrator
     app.state.valkey_client = valkey_client
     app.state.audit_chain = audit_chain
+    app.state.signing_key = signing_key
 
     yield
 
@@ -117,6 +149,10 @@ async def lifespan(app: FastAPI):
         await provider.aclose()
 
 
+from obs.tracing import configure_tracing  # noqa: E402
+
+configure_tracing()
+
 app = FastAPI(title="monoai-gateway-2.0", lifespan=lifespan)
 register_auth_exception_handlers(app)
 
@@ -124,8 +160,10 @@ from api import admin as _admin_api  # noqa: E402
 from api import chat as _chat_api  # noqa: E402
 from api import evidence as _evidence_api  # noqa: E402
 from api import health as _health_api  # noqa: E402
+from api import metrics as _metrics_api  # noqa: E402
 
 app.include_router(_chat_api.router)
 app.include_router(_health_api.router)
 app.include_router(_evidence_api.router)
 app.include_router(_admin_api.router)
+app.include_router(_metrics_api.router)

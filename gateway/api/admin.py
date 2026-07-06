@@ -72,6 +72,32 @@ async def reload_policies(
     return {"loaded": [{"policy_id": p.policy_id, "version": p.version} for p in loaded]}
 
 
+@router.delete("/v1/admin/vault/{session_id}")
+async def erase_session(
+    session_id: str,
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Right-to-erasure API (G11, DPDP/GDPR): permanently deletes every
+    vaulted value for a session_id from whichever backend is configured
+    (SQLite or Postgres)."""
+    _check_admin(authorization, request.app.state.settings.admin_key)
+    removed = request.app.state.vault_store.erase_session(session_id)
+    return {"session_id": session_id, "erased_count": removed}
+
+
+@router.post("/v1/admin/vault/sweep-expired")
+async def sweep_expired_vault_entries(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """TTL sweeper (G11), triggerable on a schedule (cron/systemd timer)
+    against a running gateway rather than needing its own process."""
+    _check_admin(authorization, request.app.state.settings.admin_key)
+    removed = request.app.state.vault_store.sweep_expired()
+    return {"swept_count": removed}
+
+
 @router.get("/v1/admin/budgets/{key_id}")
 async def get_budget(
     key_id: str,

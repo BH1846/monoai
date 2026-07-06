@@ -142,26 +142,3 @@ Porting reference (SENTINEL-2.0 / Lite_Multimodel_switching source this
 was built from) lives outside this repo at `../monoai-port-reference/` —
 see `DECISIONS.md` for why.
 
-Phase 1 — Gateway Core: done (all 7 gaps closed, 175 tests green)
-Gap	Status	Proof
-G1 streaming	✅ closed	test_streaming.py — sliding-window rehydrator, token-split-across-chunks + TTFB tests pass
-G2 per-key auth	✅ closed	test_auth.py — virtual keys, budgets, rate limits, model allowlist all pass
-G3 policy	✅ closed	test_policy.py — declarative YAML engine, same prompt/two policies/two outcomes
-G5 output scan	✅ closed	test_output_scan.py — model-leaked SSN redacted before it reaches the client
-G6 fallback/circuit breaker	✅ closed	test_fallback.py — primary→secondary, all-down→503, breaker opens after N failures
-G8 multi-turn	✅ closed	test_multiturn.py — same email→same token across turns, roles preserved to provider
-G14 secrets hygiene	✅ closed	test_repo_hygiene.py + CI gitleaks job; Valkey password rotated, .env.example clean
-Plus the carried-forward 7-test regression suite and the adversarial rehydration-safety property test (BLOCK values never leak) — all passing. Verified live end-to-end against real Valkey (not just mocked): health checks, key creation, streaming/non-streaming chat, BLOCK rejection, rate limiting, and audit-chain continuity across a real server restart.
-
-Found and fixed 4 real bugs during live testing (not just unit tests) that unit tests alone hadn't caught — difficulty-classifier token inflation, ONNX NER false positives on token brackets and small streaming windows, an off-by-one in the streaming split logic, and audit-chain resume across restarts. Each has a dedicated regression test now.
-
-Phase 2 — Detection depth (G4, G7, G9, G10, G11, G12, G15): not started
-No ner-sidecar, injection detection, Gulf/Arabic pack, embedding router, OTel/Prometheus, Ed25519 signing, Postgres backends, or bench/ harness. Placeholder dirs with .gitkeep + README only.
-
-Phase 3 — File/media scanning (G16): not started
-filescan-worker/ is an empty placeholder; POST /v1/files/scan returns 501.
-
-Phase 4 — MCP firewall (G13): not started
-mcp-firewall/ is an empty placeholder.
-
-
