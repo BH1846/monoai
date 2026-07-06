@@ -13,8 +13,9 @@ from audit.sinks import JsonlSink, PostgresSink, WebhookSink, read_last_hash
 from audit.signer import load_signing_key as load_record_signing_key
 from audit.signing import load_or_create_signing_key
 from auth.middleware import register_auth_exception_handlers
+from auth.postgres_key_store import PostgresKeyStore
 from auth.rate_limit import TokenBucketRateLimiter
-from auth.store import SqliteKeyStore
+from auth.store import KeyStore, SqliteKeyStore
 from config import Settings, load_settings
 from detect.pipeline import DetectionPipeline
 from detect.stages.injection_judge import SemanticInjectionJudge
@@ -33,7 +34,7 @@ from vault.storage.postgres_store import PostgresVaultStore
 from vault.storage.sqlite_store import SqliteVaultStore
 
 DETECTOR_VERSIONS = {"regex": "base_en-v1", "secrets": "base_en-v1", "ner": "base_en-v1", "locked_span": "base_en-v1"}
-PACK_VERSIONS = {"base_en": "base_en-v1"}
+PACK_VERSIONS = {"base_en": "base_en-v1", "gulf_ar": "gulf_ar-v1"}
 
 
 def _build_provider(settings: Settings) -> ProviderAdapter:
@@ -67,6 +68,14 @@ def _build_vault_store(settings: Settings, vault_crypto: VaultCrypto) -> VaultSt
             raise ValueError("VAULT_BACKEND=postgres requires VAULT_POSTGRES_DSN")
         return PostgresVaultStore(vault_crypto, settings.vault_postgres_dsn, default_ttl_s=settings.vault_ttl_s)
     return SqliteVaultStore(vault_crypto, storage_path=settings.vault_storage_path, default_ttl_s=settings.vault_ttl_s)
+
+
+def _build_key_store(settings: Settings) -> KeyStore:
+    if settings.key_store_backend == "postgres":
+        if not settings.key_store_postgres_dsn:
+            raise ValueError("KEY_STORE_BACKEND=postgres requires KEY_STORE_POSTGRES_DSN")
+        return PostgresKeyStore(settings.key_store_postgres_dsn)
+    return SqliteKeyStore(storage_path=settings.key_store_path)
 
 
 def _build_audit_sink(settings: Settings):
@@ -118,7 +127,7 @@ async def lifespan(app: FastAPI):
     policy_store = PolicyStore()
     policy_store.load_dir(settings.policy_dir)
 
-    key_store = SqliteKeyStore(storage_path=settings.key_store_path)
+    key_store = _build_key_store(settings)
     rate_limiter = TokenBucketRateLimiter(valkey_client)
 
     audit_sink = _build_audit_sink(settings)

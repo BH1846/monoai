@@ -57,7 +57,7 @@ def scan_file(data: bytes, filename: str, kind: str, pipeline: DetectionPipeline
         location_by_unit_id[unit_id] = location
         text_by_unit_id[unit_id] = text
 
-    spans = pipeline.run(text_units, locale_hint=policy.locale_hint)
+    spans = pipeline.run(text_units, locale_hint=policy.locale_hint, policy_ctx=policy)
     decisions = evaluate(spans, policy)
 
     span_counts: dict[str, int] = {}

@@ -11,6 +11,7 @@ members = [
     "monoai-core",
     "monoai-filescan-worker",
     "monoai-gateway",
+    "monoai-mcp-firewall",
     "monoai-workspace",
 ]
 
@@ -742,6 +743,29 @@ requires-dist = [
     { name = "redis", specifier = ">=5" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
     { name = "uvloop", specifier = ">=0.19" },
+]
+
+[[package]]
+name = "monoai-mcp-firewall"
+version = "0.1.0"
+source = { editable = "mcp-firewall" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "monoai-core" },
+    { name = "pyyaml" },
+    { name = "redis" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.110" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "monoai-core", editable = "core" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "redis", specifier = ">=5" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]
 
 [[package]]

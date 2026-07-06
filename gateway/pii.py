@@ -138,7 +138,7 @@ class PiiEngine:
                 turn_index=turn_index, direction="input",
             )
             with stage_span("detect", unit_id=unit.unit_id):
-                spans = self._pipeline.run([unit])
+                spans = self._pipeline.run([unit], policy_ctx=policy)
             with stage_span("policy", unit_id=unit.unit_id, policy_id=policy.policy_id, span_count=len(spans)):
                 decisions = evaluate(spans, policy)
 
@@ -198,7 +198,7 @@ class PiiEngine:
             locator=TextUnitLocator(surface="chat_message", path="output"),
             turn_index=0, direction="output",
         )
-        spans = self._pipeline.run([unit], include_ner=include_ner)
+        spans = self._pipeline.run([unit], policy_ctx=policy, include_ner=include_ner)
         decisions = evaluate(spans, policy)
         decisions = [
             d for d in decisions

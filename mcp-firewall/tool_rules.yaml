@@ -1,0 +1,14 @@
+# MCP tool-argument firewall rules (Phase 4). Any (tool, arg) pair not
+# listed here defaults to PRESERVE (scanned for audit visibility, never
+# blocked or rewritten) -- see rules.py's DEFAULT_ACTION.
+tools:
+  bash:
+    args:
+      command: BLOCK
+  web_search:
+    args:
+      query: REVERSIBLE
+  file_write:
+    args:
+      path: PRESERVE
+      content: REVERSIBLE
