@@ -63,7 +63,7 @@ class DetectionPipeline:
         self._secrets = secrets_detector or SecretsDetector()
         self._ner = ner or MiniLMNER(model_path=DEFAULT_MODEL_PATH if use_onnx_ner else None)
 
-    def _detect_and_repair(self, text: str) -> list[RawSpan]:
+    def _detect_and_repair(self, text: str, include_ner: bool = True) -> list[RawSpan]:
         # Detect against a normalized view (zero-width chars stripped,
         # full-width unicode folded, letter-spaced obfuscation collapsed)
         # so regex/ner aren't trivially evaded, then project every span
@@ -72,7 +72,14 @@ class DetectionPipeline:
 
         regex_spans = self._regex.detect(norm_text)
         secrets_spans = self._secrets.detect(norm_text)
-        ner_spans = self._ner.predict(norm_text)
+        # NER needs sentence-level context to be reliable -- on tiny,
+        # out-of-context fragments (e.g. a streaming flush window) the
+        # model can hallucinate entities from a handful of characters
+        # (regression: "mple", a mid-word fragment of "[simple]", was
+        # once misclassified as PII this way). Callers scanning small
+        # windows (gateway/streaming.py) pass include_ner=False; regex/
+        # secrets are anchored patterns and stay reliable at any size.
+        ner_spans = self._ner.predict(norm_text) if include_ner else []
 
         remapped: list[RawSpan] = []
         for span in regex_spans + secrets_spans + ner_spans:
@@ -101,10 +108,11 @@ class DetectionPipeline:
         text_units: list[TextUnit],
         locale_hint: str = "en",
         policy_ctx: Any = None,
+        include_ner: bool = True,
     ) -> list[DetectedSpan]:
         results: list[DetectedSpan] = []
         for unit in text_units:
-            detected = self._detect_and_repair(unit.text)
+            detected = self._detect_and_repair(unit.text, include_ner=include_ner)
             locked = self._locked_spans_for(unit.text)
             merged = merge_spans(locked, detected)
 

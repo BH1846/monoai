@@ -39,6 +39,25 @@ def read_jsonl(path: str) -> list[AuditRecord]:
     return records
 
 
+def read_last_hash(path: str) -> str | None:
+    """Bootstraps AuditChain.last_hash across a process restart: without
+    this, a fresh AuditChain(initial_last_hash=None) appending to an
+    EXISTING jsonl file would write a record whose prev_hash=None doesn't
+    match the file's actual last hash, breaking the chain at every
+    restart -- a real gap found during manual end-to-end testing (every
+    dev-server restart during this session corrupted the demo chain)."""
+    if not Path(path).is_file():
+        return None
+    last_hash: str | None = None
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            last_hash = AuditRecord.model_validate_json(line).hash
+    return last_hash
+
+
 class PostgresSink:
     def __init__(self, *args, **kwargs) -> None:
         raise NotImplementedError("postgres audit sink is Phase 2 — see DECISIONS.md")

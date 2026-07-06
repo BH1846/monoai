@@ -32,6 +32,7 @@ class FallbackResult:
     response: ProviderResponse
     fallback_chain_position: int
     circuit_state: str
+    route: Route
 
 
 class FallbackChain:
@@ -79,7 +80,7 @@ class FallbackChain:
 
             breaker.record_success()
             return FallbackResult(
-                response=response, fallback_chain_position=position, circuit_state=breaker.state.value
+                response=response, fallback_chain_position=position, circuit_state=breaker.state.value, route=route
             )
 
         raise AllProvidersDownError(tier) from last_exc
