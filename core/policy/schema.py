@@ -25,6 +25,7 @@ class DetectorsConfig(BaseModel):
 class OutputScanConfig(BaseModel):
     enabled: bool = True
     reuse_input_rules: bool = True
+    suppress_context: bool = False  # Phase 3: also mask sentences adjacent to a masked PII output span
 
 
 class InjectionPolicyConfig(BaseModel):
@@ -33,6 +34,7 @@ class InjectionPolicyConfig(BaseModel):
     enabled: bool = False
     threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     action: str = Field(default="BLOCK", pattern="^(BLOCK|FLAG)$")
+    semantic_depth: bool = False  # G4: always invoke the Tier 2.5 LLM judge, not just on ambiguous confidence
 
 
 class Policy(BaseModel):

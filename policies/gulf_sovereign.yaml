@@ -1,14 +1,15 @@
 policy_id: gulf_sovereign
 description: >-
-  PHASE 1 STUB — placeholder for UAE/Gulf-region sovereign policy. The
-  gulf_ar detection pack (Arabic PII patterns, Gulf ID validators) is
-  Phase 2; this policy currently only activates the base_en pack plus an
-  Arabic locale hint, and should NOT be treated as sovereignty-complete
-  until Phase 2 lands (see core/detect/packs/gulf_ar/README.md).
+  UAE/Gulf-region sovereign policy: activates the gulf_ar pack (Emirates
+  ID, Iqama, Saudi National ID, Qatar QID, Bahrain CPR, Kuwait Civil ID,
+  Oman civil number regex+checksum engines) alongside base_en, with an
+  Arabic locale hint. See DECISIONS.md and
+  core/detect/packs/gulf_ar/ids.py for which of those checksums are
+  confirmed-official vs. best-effort vs. structural-pattern-only.
 locale_hint: ar
 
 detectors:
-  packs: ["base_en"]
+  packs: ["base_en", "gulf_ar"]
   min_global_confidence: 0.0
 
 rules:
@@ -26,7 +27,10 @@ rules:
     min_confidence: 0.6
     below_min_confidence_action: PRESERVE
   CREDIT_CARD:  { action: BLOCK }
-  GOV_ID:       { action: BLOCK }
+  GOV_ID:
+    action: BLOCK
+    min_confidence: 0.6
+    below_min_confidence_action: PRESERVE
   SECRET:       { action: BLOCK }
   ORG:          { action: PRESERVE }
   TITLE:        { action: PRESERVE }

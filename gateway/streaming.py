@@ -39,6 +39,7 @@ import re
 import time
 from collections.abc import AsyncIterator
 
+from obs.tracing import stage_span
 from pii import PiiEngine
 from policy.schema import Policy
 from vault.session_tokens import TOKEN_ID_LEN, TOKEN_PREFIX
@@ -123,13 +124,14 @@ class StreamRehydrator:
         # mid-word/mid-sentence fragment -- see scan_output's docstring
         # for why NER is unreliable (and can corrupt legitimate output)
         # at this granularity. Regex/secrets detectors stay on.
-        scanned, new_tokens = self._pii.scan_output(
-            flush_region, self._session_id, self._policy, include_ner=False
-        )
-        self._output_token_ids |= new_tokens
-        final_text, unresolved, review_required = self._pii.rehydrate(
-            scanned, self._session_id, self._input_token_ids, self._output_token_ids
-        )
+        with stage_span("streaming_rehydrate", session_id=self._session_id, flush_region_len=len(flush_region)):
+            scanned, new_tokens = self._pii.scan_output(
+                flush_region, self._session_id, self._policy, include_ner=False
+            )
+            self._output_token_ids |= new_tokens
+            final_text, unresolved, review_required = self._pii.rehydrate(
+                scanned, self._session_id, self._input_token_ids, self._output_token_ids
+            )
         if unresolved:
             self.unresolved.extend(unresolved)
             self.review_required = True

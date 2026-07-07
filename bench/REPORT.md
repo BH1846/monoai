@@ -1,6 +1,6 @@
 # MonoAI Gateway 2.0 — Bench Report
 
-Generated: 2026-07-06T07:18:41.946783+00:00
+Generated: 2026-07-07T16:02:17.471479+00:00
 
 
 See `DECISIONS.md` for the honest caveats on corpus size/curation and the TF-IDF-classifier-instead-of-transformer substitutions behind these numbers.
@@ -26,14 +26,26 @@ See `DECISIONS.md` for the honest caveats on corpus size/curation and the TF-IDF
 | Stage | Accuracy | p95 latency |
 |---|---|---|
 | Heuristic only | 0.90 | n/a |
-| Cascade (+ classifier) | 1.00 | 0.39ms |
+| Cascade (+ classifier) | 1.00 | 0.45ms |
 
 
 ### Gateway end-to-end latency (StubProvider, n=50 sequential requests)
 
 | Percentile | Latency |
 |---|---|
-| p50 | 89.92ms |
-| p95 | 106.19ms |
-| p99 | 109.60ms |
+| p50 | 86.22ms |
+| p95 | 105.04ms |
+| p99 | 109.47ms |
 
+
+### Cross-runner synthetic benchmark (bench/harness.py)
+
+> portkey_mock/litellm_mock/lakera_mock/protecto_mock are NOT the real vendor products -- no API access/keys/license for any of them exists in this environment. Each is a small, independently-written stand-in reflecting only that product's public positioning (see bench/harness.py's module docstring and DECISIONS.md). Latency numbers are real measured execution time of each mock's own code; the mock's detection LOGIC is illustrative, not a competitive benchmark of the named product.
+
+| Runner | p50 ms | p99 ms | throughput req/s | PII recall | injection recall | FP labels |
+|---|---|---|---|---|---|---|
+| monoai | 0.444 | 1.108 | 2575.83 | 1.00 | 1.00 | none |
+| portkey_mock | 0.000 | 0.001 | 2059333.78 | 0.00 | 0.00 | none |
+| litellm_mock | 0.000 | 0.000 | 2184273.24 | 0.00 | 0.00 | none |
+| lakera_mock | 0.002 | 0.004 | 533211.82 | 0.00 | 0.50 | none |
+| protecto_mock | 0.003 | 0.005 | 328810.36 | 0.31 | 0.00 | none |

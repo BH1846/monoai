@@ -1,0 +1,6 @@
+{
+  "name": "MonoAI Policy Gateway",
+  "description": "An enterprise-grade AI Policy Gateway interface to monitor, analyze, and enforce governance rules such as PII scanning, RBAC access control, and secret detection.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

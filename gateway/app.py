@@ -10,20 +10,26 @@ from contextlib import asynccontextmanager
 import redis
 from audit.chain import AuditChain
 from audit.sinks import JsonlSink, PostgresSink, WebhookSink, read_last_hash
+from audit.signer import load_signing_key as load_record_signing_key
 from audit.signing import load_or_create_signing_key
+from auth.admin_account_store import SqliteAdminAccountStore
 from auth.middleware import register_auth_exception_handlers
+from auth.postgres_key_store import PostgresKeyStore
 from auth.rate_limit import TokenBucketRateLimiter
-from auth.store import SqliteKeyStore
+from auth.store import KeyStore, SqliteKeyStore
 from config import Settings, load_settings
 from detect.pipeline import DetectionPipeline
+from detect.stages.injection_judge import SemanticInjectionJudge
 from fastapi import FastAPI
 from orchestrator import Orchestrator
 from pii import PiiEngine
 from policy.store import PolicyStore
 from providers.base import ProviderAdapter
+from providers.dynamic_router import DynamicProviderRouter
 from providers.fallback_chain import FallbackChain, Route
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import CloudRoute, OpenAICompatibleProvider
+from providers.registry_store import SqliteProviderStore
 from providers.stub import StubProvider
 from vault.crypto import VaultCrypto
 from vault.storage.base import VaultStore
@@ -31,7 +37,7 @@ from vault.storage.postgres_store import PostgresVaultStore
 from vault.storage.sqlite_store import SqliteVaultStore
 
 DETECTOR_VERSIONS = {"regex": "base_en-v1", "secrets": "base_en-v1", "ner": "base_en-v1", "locked_span": "base_en-v1"}
-PACK_VERSIONS = {"base_en": "base_en-v1"}
+PACK_VERSIONS = {"base_en": "base_en-v1", "gulf_ar": "gulf_ar-v1"}
 
 
 def _build_provider(settings: Settings) -> ProviderAdapter:
@@ -65,6 +71,14 @@ def _build_vault_store(settings: Settings, vault_crypto: VaultCrypto) -> VaultSt
             raise ValueError("VAULT_BACKEND=postgres requires VAULT_POSTGRES_DSN")
         return PostgresVaultStore(vault_crypto, settings.vault_postgres_dsn, default_ttl_s=settings.vault_ttl_s)
     return SqliteVaultStore(vault_crypto, storage_path=settings.vault_storage_path, default_ttl_s=settings.vault_ttl_s)
+
+
+def _build_key_store(settings: Settings) -> KeyStore:
+    if settings.key_store_backend == "postgres":
+        if not settings.key_store_postgres_dsn:
+            raise ValueError("KEY_STORE_BACKEND=postgres requires KEY_STORE_POSTGRES_DSN")
+        return PostgresKeyStore(settings.key_store_postgres_dsn)
+    return SqliteKeyStore(storage_path=settings.key_store_path)
 
 
 def _build_audit_sink(settings: Settings):
@@ -101,12 +115,22 @@ async def lifespan(app: FastAPI):
     pipeline = DetectionPipeline(use_onnx_ner=settings.pii_use_onnx_ner)
     vault_crypto = VaultCrypto(valkey_client, key_name=settings.valkey_key_name)
     vault_store = _build_vault_store(settings, vault_crypto)
-    pii = PiiEngine(pipeline, vault_store, settings.session_token_secret)
+    semantic_judge = SemanticInjectionJudge(
+        ollama_base_url=settings.ollama_base_url,
+        ollama_model=settings.llm_judge_ollama_model,
+        claude_api_key=settings.llm_judge_claude_api_key,
+        claude_model=settings.llm_judge_claude_model,
+        timeout_s=settings.llm_judge_timeout_s,
+    )
+    pii = PiiEngine(
+        pipeline, vault_store, settings.session_token_secret,
+        semantic_judge=semantic_judge, llm_judge_enabled=settings.llm_judge_enabled,
+    )
 
     policy_store = PolicyStore()
     policy_store.load_dir(settings.policy_dir)
 
-    key_store = SqliteKeyStore(storage_path=settings.key_store_path)
+    key_store = _build_key_store(settings)
     rate_limiter = TokenBucketRateLimiter(valkey_client)
 
     audit_sink = _build_audit_sink(settings)
@@ -120,14 +144,24 @@ async def lifespan(app: FastAPI):
     elif isinstance(audit_sink, PostgresSink):
         existing = audit_sink.read_all()
         initial_last_hash = existing[-1].hash if existing else None
-    audit_chain = AuditChain(audit_sink, initial_last_hash=initial_last_hash)
+    record_signing_key = None
+    if settings.audit_sign_enabled:
+        record_signing_key = load_record_signing_key(settings.audit_sign_key, settings.session_token_secret)
+    audit_chain = AuditChain(audit_sink, initial_last_hash=initial_last_hash, signing_key=record_signing_key)
 
     signing_key = load_or_create_signing_key(valkey_client, key_name=settings.audit_signing_key_name)
 
     provider = _build_provider(settings)
     fallback_chain = _build_fallback_chain(settings, provider)
 
-    orchestrator = Orchestrator(pii, policy_store, fallback_chain, audit_chain, DETECTOR_VERSIONS, PACK_VERSIONS)
+    provider_store = SqliteProviderStore(vault_crypto, storage_path=settings.provider_store_path)
+    dynamic_router = DynamicProviderRouter(provider_store)
+    admin_account_store = SqliteAdminAccountStore(vault_crypto, storage_path=settings.admin_account_store_path)
+
+    orchestrator = Orchestrator(
+        pii, policy_store, fallback_chain, audit_chain, DETECTOR_VERSIONS, PACK_VERSIONS,
+        dynamic_router=dynamic_router,
+    )
 
     app.state.settings = settings
     app.state.pii = pii
@@ -140,18 +174,28 @@ async def lifespan(app: FastAPI):
     app.state.valkey_client = valkey_client
     app.state.audit_chain = audit_chain
     app.state.signing_key = signing_key
+    app.state.provider_store = provider_store
+    app.state.admin_account_store = admin_account_store
 
     yield
 
     vault_store.close()
     key_store.close()
+    provider_store.close()
+    admin_account_store.close()
+    await dynamic_router.aclose()
     if isinstance(provider, (OllamaProvider, OpenAICompatibleProvider)):
         await provider.aclose()
 
 
-from obs.tracing import configure_tracing  # noqa: E402
+from config import load_settings as _load_settings_for_otel  # noqa: E402
+from obs.otel import configure_otel  # noqa: E402
 
-configure_tracing()
+_otel_settings = _load_settings_for_otel()
+configure_otel(
+    otlp_endpoint=_otel_settings.otel_exporter_otlp_endpoint,
+    service_name=_otel_settings.otel_service_name,
+)
 
 app = FastAPI(title="monoai-gateway-2.0", lifespan=lifespan)
 register_auth_exception_handlers(app)

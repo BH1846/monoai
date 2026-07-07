@@ -5,27 +5,23 @@ tokenization, declarative policy governance, per-key auth/budgets/rate
 limits, provider fallback chains, streaming, and a tamper-evident audit
 chain.
 
-This is **Phase 1 ("Gateway Core")** of a 4-phase build. See
-`monoai-gateway-2.0-master-plan.md` for the full plan and gap register,
-and `DECISIONS.md` for every deviation/simplification made along the way.
+This build is complete through **Phase 4 ("Sovereignty & agentic
+governance")** of the planned 4-phase build. See `DECISIONS.md` for every
+deviation/simplification made along the way.
 
-## Phase 1 status — gap register
+## Status — all 4 phases complete
 
-| Gap | What closes it | Proof |
+| Phase | Scope | Status |
 |---|---|---|
-| G1 (streaming) | `gateway/streaming.py` sliding-window rehydrator | `tests/integration/test_streaming.py` |
-| G2 (per-key auth) | `gateway/auth/` virtual keys, budgets, rate limits | `tests/integration/test_auth.py` |
-| G3 (policy) | `core/policy/` declarative YAML engine | `tests/integration/test_policy.py` |
-| G5 (output scan) | `PiiEngine.scan_output` before rehydration | `tests/integration/test_output_scan.py` |
-| G6 (fallback) | `gateway/providers/fallback_chain.py` + circuit breaker | `tests/integration/test_fallback.py` |
-| G8 (multi-turn) | `core/vault/session_tokens.py` value-deterministic tokens | `tests/integration/test_multiturn.py` |
-| G14 (secrets hygiene) | gitignored `.env`, CI gitleaks job | `tests/unit/test_repo_hygiene.py` |
+| Phase 1 — Gateway Core | streaming, per-key auth, declarative policy, output scan, provider fallback, multi-turn vault tokens, secrets hygiene | Done |
+| Phase 2 — Governance depth & routing intelligence | semantic injection judge, embedding router cascade, OTel observability, evidence-bundle + per-record audit signing, Postgres vault/audit backends | Done |
+| Phase 3 — Multi-surface scanning & streaming | `filescan-worker/` (PDF/DOCX/XLSX/CSV scan + redact), output-scan context suppression | Done |
+| Phase 4 — Sovereignty & agentic governance | `core/detect/packs/gulf_ar/` (Gulf/Arabic ID pack), `mcp-firewall/` (MCP tool-call firewall), Postgres key store + migration script, `bench/` benchmark harness | Done |
 
-G4/G7/G9-G13/G15/G16 (injection detection, embedding router, observability,
-tamper-evident signing, Postgres backends, Gulf/Arabic pack, benchmarks,
-file scanning, MCP firewall) are Phase 2-4 — see the placeholder
-`README.md` in `ner-sidecar/`, `filescan-worker/`, `mcp-firewall/`, `bench/`,
-and `core/detect/packs/gulf_ar/`.
+`ner-sidecar/` remains a placeholder (NER still runs in-process via
+`core/detect/stages/ner_stage.py`; the HTTP/gRPC sidecar boundary was not
+needed). See each subdirectory's own `README.md` for module-level detail,
+and `DECISIONS.md` for what was simplified or deferred within each phase.
 
 ## Quickstart
 
@@ -98,9 +94,10 @@ core/
                  pluggable storage (SQLite now, Postgres stub for Phase 2)
   audit/         hash-chained records, JSONL sink, evidence export
 gateway/
-  api/           chat, health, evidence, admin (key/policy CRUD), files (Phase 3 stub)
+  api/           chat, health, evidence, admin (key/policy/provider/model CRUD), files (Phase 3 stub)
   auth/          virtual keys, token-bucket rate limiter, budget checks
-  providers/     OpenAI-compatible / Ollama / stub adapters, circuit breaker, fallback chain
+  providers/     OpenAI-compatible / Ollama / stub adapters, circuit breaker, fallback chain,
+                 runtime provider/model registry (registry_store.py) + dynamic per-model router
   router/        request normalizer (4 wire formats) + heuristic difficulty classifier
   pii.py         role-preserving sanitize / output-scan / rehydrate glue
   orchestrator.py the 6-step request spine
@@ -108,6 +105,48 @@ gateway/
 policies/        default.yaml, finance_strict.yaml, gulf_sovereign.yaml (Phase 1 stub)
 tests/           unit/ integration/ adversarial/ e2e/
 scripts/         verify_audit_chain.py — standalone verifier to hand to auditors
+```
+
+## Provider registry
+
+Beyond the single env-configured `MONOAI_PROVIDER` (stub/ollama/cloud, used
+as the difficulty-tier fallback path), an admin can register upstream
+provider credentials and models at runtime. Provider API keys are
+vault-encrypted at rest (`gateway/providers/registry_store.py`, reusing
+`core/vault/crypto.py` — never stored in plaintext). A chat request whose
+`model` matches a registered model bypasses the difficulty-tier router
+entirely and dispatches straight to that provider/model; `model: "auto"`
+(or an unregistered model) falls through to the existing behavior
+unchanged.
+
+```bash
+# Register a provider (api_key is optional for kind=ollama)
+curl -s -X POST http://127.0.0.1:8000/v1/admin/providers \
+  -H "Authorization: Bearer $MONOAI_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "groq", "kind": "openai-compatible", "base_url": "https://api.groq.com/openai/v1", "api_key": "gsk_..."}'
+# -> {"provider_id": "prov_...", "name": "groq", "kind": "openai-compatible", "base_url": "...", "key_last4": "...", "enabled": true}
+
+curl -s http://127.0.0.1:8000/v1/admin/providers -H "Authorization: Bearer $MONOAI_ADMIN_KEY"
+# -> {"providers": [...]}   # key_last4 only, never the full key
+
+# Map a client-facing model name to that provider
+curl -s -X POST http://127.0.0.1:8000/v1/admin/models \
+  -H "Authorization: Bearer $MONOAI_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model_id": "demo-model", "provider_id": "prov_...", "upstream_model": "llama-3.1-8b-instant"}'
+
+curl -s http://127.0.0.1:8000/v1/admin/models -H "Authorization: Bearer $MONOAI_ADMIN_KEY"
+# -> {"models": [{"model_id": "demo-model", "provider_name": "groq", ...}]}
+
+# Mint a virtual key scoped to that model, then chat with it
+curl -s -X POST http://127.0.0.1:8000/v1/admin/keys \
+  -H "Authorization: Bearer $MONOAI_ADMIN_KEY" -H "Content-Type: application/json" \
+  -d '{"model_allowlist": ["demo-model"]}'
+
+curl -s -X POST http://127.0.0.1:8000/v1/chat/completions \
+  -H "Authorization: Bearer mk-..." -H "Content-Type: application/json" \
+  -d '{"model": "demo-model", "messages":[{"role":"user","content":"hi"}]}'
 ```
 
 ## Environment variables

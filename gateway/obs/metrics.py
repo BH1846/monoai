@@ -41,6 +41,13 @@ INJECTION_FLAGGED_TOTAL = Counter(
     registry=REGISTRY,
 )
 
+INJECTION_JUDGE_INVOCATIONS_TOTAL = Counter(
+    "monoai_injection_judge_invocations_total",
+    "Tier 2.5 semantic injection judge invocations, by backend and availability",
+    ["backend", "available"],
+    registry=REGISTRY,
+)
+
 
 def render() -> bytes:
     return generate_latest(REGISTRY)

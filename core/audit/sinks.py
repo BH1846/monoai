@@ -30,14 +30,27 @@ class JsonlSink:
             os.fsync(f.fileno())
 
 
-def read_jsonl(path: str) -> list[AuditRecord]:
+class UnsignedAuditRecordError(Exception):
+    """Raised by read_jsonl/PostgresSink.read_all when require_signature=True
+    (MONOAI_AUDIT_SIGN=true) and a record lacks a signature -- G13's
+    "reject unsigned entries" reading-side enforcement."""
+
+    def __init__(self, record_id: str) -> None:
+        super().__init__(f"unsigned audit record found while signing is required: {record_id}")
+        self.record_id = record_id
+
+
+def read_jsonl(path: str, require_signature: bool = False) -> list[AuditRecord]:
     records: list[AuditRecord] = []
     with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
-            records.append(AuditRecord.model_validate_json(line))
+            record = AuditRecord.model_validate_json(line)
+            if require_signature and record.signature is None:
+                raise UnsignedAuditRecordError(record.record_id)
+            records.append(record)
     return records
 
 
@@ -99,9 +112,14 @@ class PostgresSink:
             ),
         )
 
-    def read_all(self) -> list[AuditRecord]:
+    def read_all(self, require_signature: bool = False) -> list[AuditRecord]:
         rows = self._conn.execute(f"SELECT data FROM {self._table} ORDER BY ts ASC").fetchall()
-        return [AuditRecord.model_validate_json(row[0]) for row in rows]
+        records = [AuditRecord.model_validate_json(row[0]) for row in rows]
+        if require_signature:
+            for record in records:
+                if record.signature is None:
+                    raise UnsignedAuditRecordError(record.record_id)
+        return records
 
     def close(self) -> None:
         self._conn.close()

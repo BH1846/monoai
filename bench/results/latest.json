@@ -1,0 +1,97 @@
+{
+  "caveat": "portkey_mock/litellm_mock/lakera_mock/protecto_mock are NOT the real vendor products -- no API access/keys/license for any of them exists in this environment. Each is a small, independently-written stand-in reflecting only that product's public positioning (see bench/harness.py's module docstring and DECISIONS.md). Latency numbers are real measured execution time of each mock's own code; the mock's detection LOGIC is illustrative, not a competitive benchmark of the named product.",
+  "generated_at": 1783440137.4711366,
+  "n_payloads": 330,
+  "results": [
+    {
+      "false_positive_splits": {},
+      "injection": {
+        "fn": 0,
+        "fp": 3,
+        "recall": 1.0,
+        "tn": 177,
+        "tp": 150
+      },
+      "latency_ms": {
+        "p50": 0.4437,
+        "p99": 1.1078
+      },
+      "n_payloads": 330,
+      "pii_recall": 1.0,
+      "runner": "monoai",
+      "throughput_rps": 2575.83
+    },
+    {
+      "false_positive_splits": {},
+      "injection": {
+        "fn": 150,
+        "fp": 0,
+        "recall": 0.0,
+        "tn": 180,
+        "tp": 0
+      },
+      "latency_ms": {
+        "p50": 0.0003,
+        "p99": 0.0006
+      },
+      "n_payloads": 330,
+      "pii_recall": 0.0,
+      "runner": "portkey_mock",
+      "throughput_rps": 2059333.78
+    },
+    {
+      "false_positive_splits": {},
+      "injection": {
+        "fn": 150,
+        "fp": 0,
+        "recall": 0.0,
+        "tn": 180,
+        "tp": 0
+      },
+      "latency_ms": {
+        "p50": 0.0003,
+        "p99": 0.0004
+      },
+      "n_payloads": 330,
+      "pii_recall": 0.0,
+      "runner": "litellm_mock",
+      "throughput_rps": 2184273.24
+    },
+    {
+      "false_positive_splits": {},
+      "injection": {
+        "fn": 75,
+        "fp": 0,
+        "recall": 0.5,
+        "tn": 180,
+        "tp": 75
+      },
+      "latency_ms": {
+        "p50": 0.0016,
+        "p99": 0.0041
+      },
+      "n_payloads": 330,
+      "pii_recall": 0.0,
+      "runner": "lakera_mock",
+      "throughput_rps": 533211.82
+    },
+    {
+      "false_positive_splits": {},
+      "injection": {
+        "fn": 150,
+        "fp": 0,
+        "recall": 0.0,
+        "tn": 180,
+        "tp": 0
+      },
+      "latency_ms": {
+        "p50": 0.0026,
+        "p99": 0.0049
+      },
+      "n_payloads": 330,
+      "pii_recall": 0.3077,
+      "runner": "protecto_mock",
+      "throughput_rps": 328810.36
+    }
+  ]
+}

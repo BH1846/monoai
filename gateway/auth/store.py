@@ -1,5 +1,6 @@
-"""KeyStore: virtual API keys. SQLite for Phase 1 (matches core/vault's
-SQLite-first choice); PostgresKeyStore is a Phase 2 stub — see DECISIONS.md.
+"""KeyStore: virtual API keys. SQLite here for dev/single-node (matches
+core/vault's SQLite-first choice); see auth/postgres_key_store.py for
+the production Postgres backend.
 """
 from __future__ import annotations
 
@@ -146,8 +147,3 @@ class SqliteKeyStore:
 
     def close(self) -> None:
         self._conn.close()
-
-
-class PostgresKeyStore:
-    def __init__(self, *args, **kwargs) -> None:
-        raise NotImplementedError("postgres key store is Phase 2 — see DECISIONS.md")

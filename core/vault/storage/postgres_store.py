@@ -41,7 +41,7 @@ class PostgresVaultStore:
         self._conn = psycopg.connect(dsn, autocommit=True)
         self._conn.execute(_SCHEMA)
         self._lock = threading.Lock()
-        self._cache: dict[tuple[str, str], str] = {}
+        self._cache: dict[tuple[str, str], tuple[str, Optional[float]]] = {}
         self._cache_lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=2)
         self._pending: list[Future] = []
@@ -49,18 +49,18 @@ class PostgresVaultStore:
     def write_async(
         self, session_id: str, token_id: str, plaintext: str, ttl_s: Optional[float] = None
     ) -> None:
+        ttl = ttl_s if ttl_s is not None else self._default_ttl_s
+        expires_at = time.time() + ttl if ttl is not None else None
         with self._cache_lock:
-            self._cache[(session_id, token_id)] = plaintext
-        future = self._executor.submit(self._encrypt_and_store, session_id, token_id, plaintext, ttl_s)
+            self._cache[(session_id, token_id)] = (plaintext, expires_at)
+        future = self._executor.submit(self._encrypt_and_store, session_id, token_id, plaintext, expires_at)
         self._pending.append(future)
 
     def _encrypt_and_store(
-        self, session_id: str, token_id: str, plaintext: str, ttl_s: Optional[float]
+        self, session_id: str, token_id: str, plaintext: str, expires_at: Optional[float]
     ) -> None:
         nonce, ciphertext, sealed_dek = self._crypto.encrypt(session_id, token_id, plaintext)
         now = time.time()
-        ttl = ttl_s if ttl_s is not None else self._default_ttl_s
-        expires_at = now + ttl if ttl is not None else None
         with self._lock:
             self._conn.execute(
                 "INSERT INTO vault_entries "
@@ -74,10 +74,18 @@ class PostgresVaultStore:
             )
 
     def get(self, session_id: str, token_id: str) -> Optional[str]:
+        key = (session_id, token_id)
         with self._cache_lock:
-            cached = self._cache.get((session_id, token_id))
+            cached = self._cache.get(key)
         if cached is not None:
-            return cached
+            plaintext, expires_at = cached
+            if expires_at is None or expires_at >= time.time():
+                return plaintext
+            # Cached entry has expired since it was written -- evict it and
+            # fall through to the DB read below (do NOT trust the cache on
+            # a hit without re-checking expiry; this was the Phase 1 bug).
+            with self._cache_lock:
+                self._cache.pop(key, None)
 
         with self._lock:
             row = self._conn.execute(
@@ -94,7 +102,7 @@ class PostgresVaultStore:
             session_id, token_id, bytes(nonce), bytes(ciphertext), bytes(sealed_dek)
         )
         with self._cache_lock:
-            self._cache[(session_id, token_id)] = plaintext
+            self._cache[key] = (plaintext, expires_at)
         return plaintext
 
     def sweep_expired(self) -> int:

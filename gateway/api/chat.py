@@ -19,6 +19,7 @@ from typing import Any
 from auth.middleware import authenticate, check_budget, check_model_allowed, check_rate_limit
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from obs.tracing import stage_span
 from orchestrator import ChatResult, Orchestrator, ProviderFailureError
 from pii import BlockedContentError
 from router.normalizer import NormalizationError
@@ -100,10 +101,11 @@ async def chat_completions(
 
     model_id = payload.get("model")
 
-    key = authenticate(authorization, key_store)
-    check_budget(key)
-    check_model_allowed(key, model_id)
-    check_rate_limit(key, limiter)
+    with stage_span("auth", model_id=model_id):
+        key = authenticate(authorization, key_store)
+        check_budget(key)
+        check_model_allowed(key, model_id)
+        check_rate_limit(key, limiter)
 
     session_id = payload.get("session_id")
     stream = bool(payload.get("stream", False))
@@ -164,3 +166,25 @@ async def chat_completions(
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(_sse(), media_type="text/event-stream")
+
+
+@router.get("/v1/me")
+async def whoami(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> Any:
+    """Lets a caller holding only a virtual key (no admin key) introspect
+    its own scope -- specifically model_allowlist, so a chat client can
+    filter its model picker down to what it's actually allowed to call
+    without needing admin access to GET /v1/admin/keys."""
+    key_store = request.app.state.key_store
+    key = authenticate(authorization, key_store)
+    return {
+        "key_id": key.key_id,
+        "team_id": key.team_id,
+        "policy_id": key.policy_id,
+        "model_allowlist": key.model_allowlist,
+        "budget_usd_monthly": key.budget_usd_monthly,
+        "budget_usd_spent": key.budget_usd_spent,
+        "active": key.active,
+    }
