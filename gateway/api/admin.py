@@ -61,6 +61,34 @@ async def revoke_key(
     return {"revoked": key_id}
 
 
+@router.post("/v1/admin/account")
+async def save_admin_account(
+    request: Request,
+    body: dict[str, Any],
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Associates the admin key that was just used to authenticate this
+    call with `email`, so a future GET /v1/admin/account/{email} can hand
+    it back without the console asking the admin to re-paste it."""
+    admin_key = request.app.state.settings.admin_key
+    _check_admin(authorization, admin_key)
+    email = (body.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="email is required")
+    request.app.state.admin_account_store.save(email, admin_key)
+    return {"email": email, "saved": True}
+
+
+@router.get("/v1/admin/account/{email}")
+async def get_admin_account(email: str, request: Request) -> dict[str, Any]:
+    """Deliberately unauthenticated -- see gateway/auth/admin_account_store.py
+    module docstring for the security tradeoff this accepts."""
+    account = request.app.state.admin_account_store.get(email.strip().lower())
+    if account is None:
+        raise HTTPException(status_code=404, detail="no admin account saved for this email")
+    return {"email": account.email, "admin_key": account.admin_key}
+
+
 @router.post("/v1/admin/policies/reload")
 async def reload_policies(
     request: Request,
@@ -96,6 +124,128 @@ async def sweep_expired_vault_entries(
     _check_admin(authorization, request.app.state.settings.admin_key)
     removed = request.app.state.vault_store.sweep_expired()
     return {"swept_count": removed}
+
+
+@router.get("/v1/admin/keys/{key_id}")
+async def get_key(
+    key_id: str,
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _check_admin(authorization, request.app.state.settings.admin_key)
+    keys = [k for k in request.app.state.key_store.list_keys() if k.key_id == key_id]
+    if not keys:
+        raise HTTPException(status_code=404, detail="unknown key_id")
+    return keys[0].model_dump(exclude={"key_hash"})
+
+
+@router.post("/v1/admin/providers")
+async def create_provider(
+    request: Request,
+    body: dict[str, Any],
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _check_admin(authorization, request.app.state.settings.admin_key)
+    name = body.get("name")
+    kind = body.get("kind")
+    base_url = body.get("base_url")
+    if not name or not kind or not base_url:
+        raise HTTPException(status_code=400, detail="name, kind, and base_url are required")
+    try:
+        record = request.app.state.provider_store.add_provider(
+            name=name, kind=kind, base_url=base_url, api_key=body.get("api_key"),
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    return {
+        "provider_id": record.provider_id, "name": record.name, "kind": record.kind,
+        "base_url": record.base_url, "key_last4": record.key_last4, "enabled": record.enabled,
+    }
+
+
+@router.get("/v1/admin/providers")
+async def list_providers(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _check_admin(authorization, request.app.state.settings.admin_key)
+    providers = request.app.state.provider_store.list_providers()
+    return {
+        "providers": [
+            {
+                "provider_id": p.provider_id, "name": p.name, "kind": p.kind, "base_url": p.base_url,
+                "key_last4": p.key_last4, "enabled": p.enabled,
+            }
+            for p in providers
+        ]
+    }
+
+
+@router.delete("/v1/admin/providers/{provider_id}")
+async def delete_provider(
+    provider_id: str,
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _check_admin(authorization, request.app.state.settings.admin_key)
+    if not request.app.state.provider_store.delete_provider(provider_id):
+        raise HTTPException(status_code=404, detail="unknown provider_id")
+    return {"deleted": provider_id}
+
+
+@router.post("/v1/admin/models")
+async def create_model(
+    request: Request,
+    body: dict[str, Any],
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _check_admin(authorization, request.app.state.settings.admin_key)
+    store = request.app.state.provider_store
+    model_id = body.get("model_id")
+    provider_id = body.get("provider_id")
+    if not model_id or not provider_id:
+        raise HTTPException(status_code=400, detail="model_id and provider_id are required")
+    try:
+        record = store.add_model(
+            model_id=model_id, provider_id=provider_id,
+            upstream_model=body.get("upstream_model"), display_name=body.get("display_name"),
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err)) from err
+    return {
+        "model_id": record.model_id, "provider_id": record.provider_id, "provider_name": record.provider_name,
+        "upstream_model": record.upstream_model, "display_name": record.display_name, "enabled": record.enabled,
+    }
+
+
+@router.get("/v1/admin/models")
+async def list_models(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _check_admin(authorization, request.app.state.settings.admin_key)
+    models = request.app.state.provider_store.list_models()
+    return {
+        "models": [
+            {
+                "model_id": m.model_id, "provider_id": m.provider_id, "provider_name": m.provider_name,
+                "upstream_model": m.upstream_model, "display_name": m.display_name, "enabled": m.enabled,
+            }
+            for m in models
+        ]
+    }
+
+
+@router.delete("/v1/admin/models/{model_id}")
+async def delete_model(
+    model_id: str,
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _check_admin(authorization, request.app.state.settings.admin_key)
+    if not request.app.state.provider_store.delete_model(model_id):
+        raise HTTPException(status_code=404, detail="unknown model_id")
+    return {"deleted": model_id}
 
 
 @router.get("/v1/admin/budgets/{key_id}")

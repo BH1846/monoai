@@ -12,6 +12,7 @@ from audit.chain import AuditChain
 from audit.sinks import JsonlSink, PostgresSink, WebhookSink, read_last_hash
 from audit.signer import load_signing_key as load_record_signing_key
 from audit.signing import load_or_create_signing_key
+from auth.admin_account_store import SqliteAdminAccountStore
 from auth.middleware import register_auth_exception_handlers
 from auth.postgres_key_store import PostgresKeyStore
 from auth.rate_limit import TokenBucketRateLimiter
@@ -24,9 +25,11 @@ from orchestrator import Orchestrator
 from pii import PiiEngine
 from policy.store import PolicyStore
 from providers.base import ProviderAdapter
+from providers.dynamic_router import DynamicProviderRouter
 from providers.fallback_chain import FallbackChain, Route
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import CloudRoute, OpenAICompatibleProvider
+from providers.registry_store import SqliteProviderStore
 from providers.stub import StubProvider
 from vault.crypto import VaultCrypto
 from vault.storage.base import VaultStore
@@ -151,7 +154,14 @@ async def lifespan(app: FastAPI):
     provider = _build_provider(settings)
     fallback_chain = _build_fallback_chain(settings, provider)
 
-    orchestrator = Orchestrator(pii, policy_store, fallback_chain, audit_chain, DETECTOR_VERSIONS, PACK_VERSIONS)
+    provider_store = SqliteProviderStore(vault_crypto, storage_path=settings.provider_store_path)
+    dynamic_router = DynamicProviderRouter(provider_store)
+    admin_account_store = SqliteAdminAccountStore(vault_crypto, storage_path=settings.admin_account_store_path)
+
+    orchestrator = Orchestrator(
+        pii, policy_store, fallback_chain, audit_chain, DETECTOR_VERSIONS, PACK_VERSIONS,
+        dynamic_router=dynamic_router,
+    )
 
     app.state.settings = settings
     app.state.pii = pii
@@ -164,11 +174,16 @@ async def lifespan(app: FastAPI):
     app.state.valkey_client = valkey_client
     app.state.audit_chain = audit_chain
     app.state.signing_key = signing_key
+    app.state.provider_store = provider_store
+    app.state.admin_account_store = admin_account_store
 
     yield
 
     vault_store.close()
     key_store.close()
+    provider_store.close()
+    admin_account_store.close()
+    await dynamic_router.aclose()
     if isinstance(provider, (OllamaProvider, OpenAICompatibleProvider)):
         await provider.aclose()
 

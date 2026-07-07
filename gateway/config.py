@@ -81,6 +81,8 @@ class Settings:
     key_store_backend: str = field(default_factory=lambda: os.environ.get("KEY_STORE_BACKEND", "sqlite"))
     key_store_path: str = field(default_factory=lambda: os.environ.get("GATEWAY_KEY_STORE_PATH", "./gateway_keys.sqlite"))
     key_store_postgres_dsn: str | None = field(default_factory=lambda: os.environ.get("KEY_STORE_POSTGRES_DSN") or None)
+    provider_store_path: str = field(default_factory=lambda: os.environ.get("PROVIDER_STORE_PATH", "./gateway_providers.sqlite"))
+    admin_account_store_path: str = field(default_factory=lambda: os.environ.get("ADMIN_ACCOUNT_STORE_PATH", "./gateway_admin_accounts.sqlite"))
 
     # -- audit --
     audit_log_path: str = field(default_factory=lambda: os.environ.get("MONOAI_AUDIT_LOG_PATH", "./gateway_audit.jsonl"))

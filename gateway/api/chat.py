@@ -166,3 +166,25 @@ async def chat_completions(
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(_sse(), media_type="text/event-stream")
+
+
+@router.get("/v1/me")
+async def whoami(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> Any:
+    """Lets a caller holding only a virtual key (no admin key) introspect
+    its own scope -- specifically model_allowlist, so a chat client can
+    filter its model picker down to what it's actually allowed to call
+    without needing admin access to GET /v1/admin/keys."""
+    key_store = request.app.state.key_store
+    key = authenticate(authorization, key_store)
+    return {
+        "key_id": key.key_id,
+        "team_id": key.team_id,
+        "policy_id": key.policy_id,
+        "model_allowlist": key.model_allowlist,
+        "budget_usd_monthly": key.budget_usd_monthly,
+        "budget_usd_spent": key.budget_usd_spent,
+        "active": key.active,
+    }

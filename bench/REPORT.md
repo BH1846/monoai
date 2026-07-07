@@ -1,6 +1,6 @@
 # MonoAI Gateway 2.0 — Bench Report
 
-Generated: 2026-07-06T16:57:41.868425+00:00
+Generated: 2026-07-07T16:02:17.471479+00:00
 
 
 See `DECISIONS.md` for the honest caveats on corpus size/curation and the TF-IDF-classifier-instead-of-transformer substitutions behind these numbers.
@@ -26,16 +26,16 @@ See `DECISIONS.md` for the honest caveats on corpus size/curation and the TF-IDF
 | Stage | Accuracy | p95 latency |
 |---|---|---|
 | Heuristic only | 0.90 | n/a |
-| Cascade (+ classifier) | 1.00 | 0.43ms |
+| Cascade (+ classifier) | 1.00 | 0.45ms |
 
 
 ### Gateway end-to-end latency (StubProvider, n=50 sequential requests)
 
 | Percentile | Latency |
 |---|---|
-| p50 | 89.89ms |
-| p95 | 101.34ms |
-| p99 | 110.66ms |
+| p50 | 86.22ms |
+| p95 | 105.04ms |
+| p99 | 109.47ms |
 
 
 ### Cross-runner synthetic benchmark (bench/harness.py)
@@ -44,8 +44,8 @@ See `DECISIONS.md` for the honest caveats on corpus size/curation and the TF-IDF
 
 | Runner | p50 ms | p99 ms | throughput req/s | PII recall | injection recall | FP labels |
 |---|---|---|---|---|---|---|
-| monoai | 0.420 | 0.873 | 2714.17 | 1.00 | 1.00 | none |
-| portkey_mock | 0.000 | 0.001 | 1496951.66 | 0.00 | 0.00 | none |
-| litellm_mock | 0.000 | 0.000 | 2003144.33 | 0.00 | 0.00 | none |
-| lakera_mock | 0.002 | 0.004 | 419770.96 | 0.00 | 0.50 | none |
-| protecto_mock | 0.003 | 0.006 | 283669.17 | 0.31 | 0.00 | none |
+| monoai | 0.444 | 1.108 | 2575.83 | 1.00 | 1.00 | none |
+| portkey_mock | 0.000 | 0.001 | 2059333.78 | 0.00 | 0.00 | none |
+| litellm_mock | 0.000 | 0.000 | 2184273.24 | 0.00 | 0.00 | none |
+| lakera_mock | 0.002 | 0.004 | 533211.82 | 0.00 | 0.50 | none |
+| protecto_mock | 0.003 | 0.005 | 328810.36 | 0.31 | 0.00 | none |

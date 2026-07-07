@@ -45,6 +45,13 @@ class OpenAICompatibleProvider(ProviderAdapter):
     def pop_cost(self, request_id: str) -> float | None:
         return self._last_cost.pop(request_id, None)
 
+    def set_route(self, key: str, route: CloudRoute) -> None:
+        """Register/replace a route entry after construction -- used by the
+        dynamic provider registry (providers/dynamic_router.py) to add
+        admin-registered models to an already-running adapter instance
+        without rebuilding its cached httpx clients."""
+        self._routes[key] = route
+
     def _client_for(self, api_key: str) -> httpx.AsyncClient:
         client = self._clients.get(api_key)
         if client is None:

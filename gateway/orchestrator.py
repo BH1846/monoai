@@ -28,6 +28,7 @@ from obs.tracing import stage_span
 from pii import BlockedContentError, PiiEngine, SanitizeResult
 from policy.schema import Policy
 from policy.store import PolicyStore
+from providers.dynamic_router import DynamicProviderRouter
 from providers.fallback_chain import AllProvidersDownError, FallbackChain, FallbackResult
 from router.embedding_classifier import EmbeddingRouterClassifier, classify_difficulty_cascade
 from router.embedding_router import EmbeddingRouter, RouterDecision
@@ -99,6 +100,7 @@ class Orchestrator:
         pack_versions: dict[str, str],
         embedding_classifier: EmbeddingRouterClassifier | None = None,
         embedding_router: EmbeddingRouter | None = None,
+        dynamic_router: DynamicProviderRouter | None = None,
     ) -> None:
         self._pii = pii
         self._policy_store = policy_store
@@ -109,6 +111,34 @@ class Orchestrator:
         self._pack_versions = pack_versions
         self._embedding_classifier = embedding_classifier or EmbeddingRouterClassifier.load()
         self._embedding_router = embedding_router or EmbeddingRouter.load()
+        self._dynamic_router = dynamic_router
+
+    def _route_failure_record(
+        self,
+        request_id: str,
+        session_id: str,
+        virtual_key_id: str | None,
+        team_id: str | None,
+        policy: Policy,
+        sanitize_result: SanitizeResult,
+        difficulty: str,
+        router_decision: RouterDecision,
+        pii_sanitize_ms: float,
+        router_ms: float,
+        t_start: float,
+    ) -> AuditRecord:
+        return AuditRecord(
+            ts=time.time(), request_id=request_id, session_id=session_id,
+            virtual_key_id=virtual_key_id, team_id=team_id, event="provider_failure",
+            policy_id=policy.policy_id, policy_version=policy.version,
+            detector_versions=self._detector_versions, pack_versions=self._pack_versions,
+            span_counts_by_label=sanitize_result.span_counts_by_label,
+            redacted_count=sanitize_result.redacted_count, difficulty=difficulty,
+            router_tier=router_decision.tier, router_confidence=router_decision.confidence,
+            router_rationale=router_decision.rationale,
+            pii_sanitize_ms=round(pii_sanitize_ms, 3), router_ms=round(router_ms, 3),
+            total_ms=round((time.monotonic() - t_start) * 1000.0, 3),
+        )
 
     async def prepare_dispatch(
         self,
@@ -148,33 +178,51 @@ class Orchestrator:
 
         sanitized_ctx = ctx.model_copy(update={"messages": sanitize_result.messages})
         sanitized_prompt = "\n".join(m.content for m in sanitize_result.messages if isinstance(m.content, str))
-        classification_text = self._pii.strip_tokens_for_classification(sanitized_prompt)
-        heuristic_difficulty = classify_difficulty(classification_text)
-        difficulty = classify_difficulty_cascade(classification_text, heuristic_difficulty, self._embedding_classifier)
-        router_decision = self._embedding_router.classify(classification_text)
-        if router_decision.confidence >= _ROUTER_MIN_CONFIDENCE:
-            difficulty = router_decision.difficulty
 
         t1 = time.monotonic()
-        try:
-            with stage_span("route", request_id=request_id, difficulty=difficulty):
-                fb_result = await self._fallback_chain.dispatch(request_id, difficulty, sanitized_ctx)
-        except AllProvidersDownError as err:
-            router_ms = (time.monotonic() - t1) * 1000.0
-            record = AuditRecord(
-                ts=time.time(), request_id=request_id, session_id=session_id,
-                virtual_key_id=virtual_key_id, team_id=team_id, event="provider_failure",
-                policy_id=policy.policy_id, policy_version=policy.version,
-                detector_versions=self._detector_versions, pack_versions=self._pack_versions,
-                span_counts_by_label=sanitize_result.span_counts_by_label,
-                redacted_count=sanitize_result.redacted_count, difficulty=difficulty,
-                router_tier=router_decision.tier, router_confidence=router_decision.confidence,
-                router_rationale=router_decision.rationale,
-                pii_sanitize_ms=round(pii_sanitize_ms, 3), router_ms=round(router_ms, 3),
-                total_ms=round((time.monotonic() - t_start) * 1000.0, 3),
+        dynamic_route = self._dynamic_router.resolve_route(ctx.model_hint) if self._dynamic_router else None
+
+        if dynamic_route is not None:
+            difficulty = "dynamic"
+            router_decision = RouterDecision(
+                difficulty="dynamic", confidence=1.0, tier="explicit_model",
+                rationale=f"model {ctx.model_hint!r} resolved via provider registry (provider={dynamic_route.provider_name})",
             )
-            self._audit_chain.append(record)
-            raise ProviderFailureError(err.tier, session_id, record) from err
+            try:
+                with stage_span("route", request_id=request_id, difficulty=difficulty):
+                    response = await dynamic_route.provider.complete(request_id, dynamic_route.model_id, sanitized_ctx)
+                fb_result = FallbackResult(
+                    response=response.model_copy(update={"provider": dynamic_route.provider_name}),
+                    fallback_chain_position=0, circuit_state="n/a", route=dynamic_route,
+                )
+            except Exception as exc:
+                router_ms = (time.monotonic() - t1) * 1000.0
+                record = self._route_failure_record(
+                    request_id, session_id, virtual_key_id, team_id, policy, sanitize_result,
+                    difficulty, router_decision, pii_sanitize_ms, router_ms, t_start,
+                )
+                self._audit_chain.append(record)
+                raise ProviderFailureError(f"model:{ctx.model_hint}", session_id, record) from exc
+        else:
+            classification_text = self._pii.strip_tokens_for_classification(sanitized_prompt)
+            heuristic_difficulty = classify_difficulty(classification_text)
+            difficulty = classify_difficulty_cascade(classification_text, heuristic_difficulty, self._embedding_classifier)
+            router_decision = self._embedding_router.classify(classification_text)
+            if router_decision.confidence >= _ROUTER_MIN_CONFIDENCE:
+                difficulty = router_decision.difficulty
+
+            try:
+                with stage_span("route", request_id=request_id, difficulty=difficulty):
+                    fb_result = await self._fallback_chain.dispatch(request_id, difficulty, sanitized_ctx)
+            except AllProvidersDownError as err:
+                router_ms = (time.monotonic() - t1) * 1000.0
+                record = self._route_failure_record(
+                    request_id, session_id, virtual_key_id, team_id, policy, sanitize_result,
+                    difficulty, router_decision, pii_sanitize_ms, router_ms, t_start,
+                )
+                self._audit_chain.append(record)
+                raise ProviderFailureError(err.tier, session_id, record) from err
+
         router_ms = (time.monotonic() - t1) * 1000.0
         REQUEST_DURATION_SECONDS.labels(stage="route").observe(router_ms / 1000.0)
         record_latency("route", router_ms)

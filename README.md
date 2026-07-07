@@ -94,9 +94,10 @@ core/
                  pluggable storage (SQLite now, Postgres stub for Phase 2)
   audit/         hash-chained records, JSONL sink, evidence export
 gateway/
-  api/           chat, health, evidence, admin (key/policy CRUD), files (Phase 3 stub)
+  api/           chat, health, evidence, admin (key/policy/provider/model CRUD), files (Phase 3 stub)
   auth/          virtual keys, token-bucket rate limiter, budget checks
-  providers/     OpenAI-compatible / Ollama / stub adapters, circuit breaker, fallback chain
+  providers/     OpenAI-compatible / Ollama / stub adapters, circuit breaker, fallback chain,
+                 runtime provider/model registry (registry_store.py) + dynamic per-model router
   router/        request normalizer (4 wire formats) + heuristic difficulty classifier
   pii.py         role-preserving sanitize / output-scan / rehydrate glue
   orchestrator.py the 6-step request spine
@@ -104,6 +105,48 @@ gateway/
 policies/        default.yaml, finance_strict.yaml, gulf_sovereign.yaml (Phase 1 stub)
 tests/           unit/ integration/ adversarial/ e2e/
 scripts/         verify_audit_chain.py — standalone verifier to hand to auditors
+```
+
+## Provider registry
+
+Beyond the single env-configured `MONOAI_PROVIDER` (stub/ollama/cloud, used
+as the difficulty-tier fallback path), an admin can register upstream
+provider credentials and models at runtime. Provider API keys are
+vault-encrypted at rest (`gateway/providers/registry_store.py`, reusing
+`core/vault/crypto.py` — never stored in plaintext). A chat request whose
+`model` matches a registered model bypasses the difficulty-tier router
+entirely and dispatches straight to that provider/model; `model: "auto"`
+(or an unregistered model) falls through to the existing behavior
+unchanged.
+
+```bash
+# Register a provider (api_key is optional for kind=ollama)
+curl -s -X POST http://127.0.0.1:8000/v1/admin/providers \
+  -H "Authorization: Bearer $MONOAI_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "groq", "kind": "openai-compatible", "base_url": "https://api.groq.com/openai/v1", "api_key": "gsk_..."}'
+# -> {"provider_id": "prov_...", "name": "groq", "kind": "openai-compatible", "base_url": "...", "key_last4": "...", "enabled": true}
+
+curl -s http://127.0.0.1:8000/v1/admin/providers -H "Authorization: Bearer $MONOAI_ADMIN_KEY"
+# -> {"providers": [...]}   # key_last4 only, never the full key
+
+# Map a client-facing model name to that provider
+curl -s -X POST http://127.0.0.1:8000/v1/admin/models \
+  -H "Authorization: Bearer $MONOAI_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model_id": "demo-model", "provider_id": "prov_...", "upstream_model": "llama-3.1-8b-instant"}'
+
+curl -s http://127.0.0.1:8000/v1/admin/models -H "Authorization: Bearer $MONOAI_ADMIN_KEY"
+# -> {"models": [{"model_id": "demo-model", "provider_name": "groq", ...}]}
+
+# Mint a virtual key scoped to that model, then chat with it
+curl -s -X POST http://127.0.0.1:8000/v1/admin/keys \
+  -H "Authorization: Bearer $MONOAI_ADMIN_KEY" -H "Content-Type: application/json" \
+  -d '{"model_allowlist": ["demo-model"]}'
+
+curl -s -X POST http://127.0.0.1:8000/v1/chat/completions \
+  -H "Authorization: Bearer mk-..." -H "Content-Type: application/json" \
+  -d '{"model": "demo-model", "messages":[{"role":"user","content":"hi"}]}'
 ```
 
 ## Environment variables
