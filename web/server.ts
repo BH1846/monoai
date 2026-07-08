@@ -218,6 +218,135 @@ app.get("/api/me", async (req, res) => {
   }
 });
 
+// Self-serve account creation/login (see gateway/api/auth.py): unauthenticated
+// passthrough -- these two routes are how a browser gets a virtual key in the
+// first place, so there's no admin/virtual key to attach yet.
+app.post("/api/auth/register", async (req, res) => {
+  const gatewayUrl = gatewayUrlFor(req);
+  try {
+    const upstream = await fetch(`${gatewayUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req.body ?? {}),
+    });
+    const text = await upstream.text();
+    res.status(upstream.status);
+    const contentType = upstream.headers.get("content-type");
+    if (contentType) res.setHeader("content-type", contentType);
+    res.send(text);
+  } catch (error: any) {
+    res.status(502).json({
+      error: { type: "proxy_error", message: error.message || `Failed to reach gateway at ${gatewayUrl}` },
+    });
+  }
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  const gatewayUrl = gatewayUrlFor(req);
+  try {
+    const upstream = await fetch(`${gatewayUrl}/v1/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req.body ?? {}),
+    });
+    const text = await upstream.text();
+    res.status(upstream.status);
+    const contentType = upstream.headers.get("content-type");
+    if (contentType) res.setHeader("content-type", contentType);
+    res.send(text);
+  } catch (error: any) {
+    res.status(502).json({
+      error: { type: "proxy_error", message: error.message || `Failed to reach gateway at ${gatewayUrl}` },
+    });
+  }
+});
+
+// Lets a chat session list which admin-registered models it's allowed to
+// call, without needing admin access -- populates the model picker/directory
+// for a regular virtual-key-only user (see gateway/api/chat.py GET /v1/models).
+app.get("/api/models", async (req, res) => {
+  const gatewayUrl = gatewayUrlFor(req);
+  const virtualKey = req.header("x-monoai-virtual-key") || process.env.MONOAI_VIRTUAL_KEY || "";
+  try {
+    const upstream = await fetch(`${gatewayUrl}/v1/models`, {
+      headers: { Authorization: `Bearer ${virtualKey}` },
+    });
+    const text = await upstream.text();
+    res.status(upstream.status);
+    const contentType = upstream.headers.get("content-type");
+    if (contentType) res.setHeader("content-type", contentType);
+    res.send(text);
+  } catch (error: any) {
+    res.status(502).json({
+      error: { type: "proxy_error", message: error.message || `Failed to reach gateway at ${gatewayUrl}` },
+    });
+  }
+});
+
+// Powers the Admin > Audit Log tab. The real audit trail lives at
+// GET /v1/evidence/export (gateway/api/evidence.py) rather than under
+// /v1/admin/*, so it needs its own route ahead of the generic passthrough
+// below -- and unlike that passthrough, this gates on the admin key itself
+// (evidence.py's endpoint doesn't check auth -- it's built for offline
+// signature verification by a third party) rather than trusting the browser.
+// The bundle is hash-chained NDJSON (first line: manifest, rest: one
+// AuditRecord per line) -- flattened here into the AuditEvent[] shape
+// AuditLogTab.tsx already renders.
+app.get("/api/admin/audit-log", async (req, res) => {
+  const gatewayUrl = gatewayUrlFor(req);
+  const adminKey = req.header("x-monoai-admin-key") || process.env.MONOAI_ADMIN_KEY || "";
+  if (!adminKey) {
+    return res.status(401).json({ error: { type: "unauthorized", message: "admin key required" } });
+  }
+
+  try {
+    const upstream = await fetch(`${gatewayUrl}/v1/evidence/export`, {
+      headers: { Authorization: `Bearer ${adminKey}` },
+    });
+    if (!upstream.ok) {
+      const body = await upstream.text().catch(() => "");
+      return res.status(upstream.status).json({ error: { type: "proxy_error", message: body || `HTTP ${upstream.status}` } });
+    }
+    const text = await upstream.text();
+    const lines = text.split("\n").filter((l) => l.trim().length > 0);
+    // First line is {"record_count", "chain_verified"}, not a record -- skip it.
+    const records = lines.slice(1).map((l) => JSON.parse(l));
+
+    const events = records.map((r: any) => {
+      const labels = Object.keys(r.span_counts_by_label || {}).concat(r.blocked_labels || []);
+      const rule: string = labels.some((l) => l === "SECRET")
+        ? "SECRET_SCAN"
+        : labels.some((l) => l === "PROMPT_INJECTION")
+          ? "CODE_VULN"
+          : "PII_SCAN";
+      const decision: string =
+        r.event === "blocked" ? "BLOCKED" : (r.redacted_count || 0) > 0 ? "REDACTED" : "ALLOWED";
+      const detailParts = [`event=${r.event}`];
+      if (r.blocked_labels?.length) detailParts.push(`blocked=[${r.blocked_labels.join(", ")}]`);
+      if (r.redacted_count) detailParts.push(`redacted_spans=${r.redacted_count}`);
+      if (r.provider) detailParts.push(`provider=${r.provider}`);
+      if (r.router_tier) detailParts.push(`tier=${r.router_tier}`);
+      if (r.cost_usd) detailParts.push(`cost=$${Number(r.cost_usd).toFixed(4)}`);
+
+      return {
+        id: r.request_id,
+        timestamp: new Date((r.ts || 0) * 1000).toISOString(),
+        decision,
+        rule,
+        user: r.team_id || r.virtual_key_id || "unknown",
+        model: r.model_id || r.difficulty || "n/a",
+        detail: detailParts.join(" · "),
+      };
+    }).reverse(); // newest first
+
+    res.json({ events });
+  } catch (error: any) {
+    res.status(502).json({
+      error: { type: "proxy_error", message: error.message || `Failed to reach gateway at ${gatewayUrl}` },
+    });
+  }
+});
+
 // Generic admin passthrough: forwards method/path-suffix/query/body to the
 // gateway's /v1/admin/* surface, injecting the admin bearer server-side so it
 // never has to touch the browser beyond this same-origin proxy.

@@ -17,6 +17,7 @@ from auth.middleware import register_auth_exception_handlers
 from auth.postgres_key_store import PostgresKeyStore
 from auth.rate_limit import TokenBucketRateLimiter
 from auth.store import KeyStore, SqliteKeyStore
+from auth.user_account_store import SqliteUserAccountStore
 from config import Settings, load_settings
 from detect.pipeline import DetectionPipeline
 from detect.stages.injection_judge import SemanticInjectionJudge
@@ -157,6 +158,7 @@ async def lifespan(app: FastAPI):
     provider_store = SqliteProviderStore(vault_crypto, storage_path=settings.provider_store_path)
     dynamic_router = DynamicProviderRouter(provider_store)
     admin_account_store = SqliteAdminAccountStore(vault_crypto, storage_path=settings.admin_account_store_path)
+    user_account_store = SqliteUserAccountStore(vault_crypto, storage_path=settings.user_account_store_path)
 
     orchestrator = Orchestrator(
         pii, policy_store, fallback_chain, audit_chain, DETECTOR_VERSIONS, PACK_VERSIONS,
@@ -176,6 +178,7 @@ async def lifespan(app: FastAPI):
     app.state.signing_key = signing_key
     app.state.provider_store = provider_store
     app.state.admin_account_store = admin_account_store
+    app.state.user_account_store = user_account_store
 
     yield
 
@@ -183,6 +186,7 @@ async def lifespan(app: FastAPI):
     key_store.close()
     provider_store.close()
     admin_account_store.close()
+    user_account_store.close()
     await dynamic_router.aclose()
     if isinstance(provider, (OllamaProvider, OpenAICompatibleProvider)):
         await provider.aclose()
@@ -201,6 +205,7 @@ app = FastAPI(title="monoai-gateway-2.0", lifespan=lifespan)
 register_auth_exception_handlers(app)
 
 from api import admin as _admin_api  # noqa: E402
+from api import auth as _auth_api  # noqa: E402
 from api import chat as _chat_api  # noqa: E402
 from api import evidence as _evidence_api  # noqa: E402
 from api import health as _health_api  # noqa: E402
@@ -210,4 +215,5 @@ app.include_router(_chat_api.router)
 app.include_router(_health_api.router)
 app.include_router(_evidence_api.router)
 app.include_router(_admin_api.router)
+app.include_router(_auth_api.router)
 app.include_router(_metrics_api.router)

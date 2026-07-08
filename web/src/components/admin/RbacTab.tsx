@@ -1,11 +1,10 @@
 import React from 'react';
 import { ShieldCheck, RefreshCw, Check, X } from 'lucide-react';
-import { UserRecord, RbacMatrix } from '../../types';
+import { RbacMatrix } from '../../types';
 
 interface RbacTabProps {
   rbacMatrix: RbacMatrix;
   toggleRbacPermission: (role: string, capability: string) => void;
-  users: UserRecord[];
   modelsAndCapabilities: Array<{ key: string; label: string; type: string }>;
   showToast: (msg: string) => void;
 }
@@ -13,7 +12,6 @@ interface RbacTabProps {
 export default function RbacTab({
   rbacMatrix,
   toggleRbacPermission,
-  users,
   modelsAndCapabilities,
   showToast
 }: RbacTabProps) {
@@ -70,9 +68,6 @@ export default function RbacTab({
               <tr key={role} className="hover:bg-white/[0.01]">
                 <td className="py-3 px-4 font-mono text-[11px] font-bold text-white/90">
                   <div>{role}</div>
-                  <span className="text-[8px] text-white/30 font-normal">
-                    Mapped users: {users.filter(u => u.role === role).length}
-                  </span>
                 </td>
                 {modelsAndCapabilities.map((mc) => {
                   const isPermitted = rbacMatrix[role]?.[mc.key] ?? false;

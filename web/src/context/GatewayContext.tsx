@@ -55,6 +55,11 @@ interface GatewayContextValue {
   // not yet known" -- callers should treat null as "show everything," not
   // "show nothing."
   modelAllowlist: string[] | null;
+  // Self-serve account creation/login (gateway/api/auth.py). Both issue or
+  // recover a real virtual key server-side and, on success, call
+  // setVirtualKey for you -- the caller only needs to route to the app.
+  registerUser: (email: string, password: string) => Promise<{ status: 'ok'; email: string } | { status: 'error'; error: string }>;
+  loginUser: (email: string, password: string) => Promise<{ status: 'ok'; email: string } | { status: 'error'; error: string }>;
 }
 
 const GatewayContext = createContext<GatewayContextValue | undefined>(undefined);
@@ -146,6 +151,38 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
     [gatewayUrl]
   );
 
+  // Deliberately doesn't go through adminFetch/chatHeaders -- there's no key
+  // to attach yet, that's the whole point of these two calls.
+  const authRequest = useCallback(
+    async (path: 'register' | 'login', email: string, password: string) => {
+      try {
+        const res = await fetch(`/api/auth/${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-monoai-gateway-url': gatewayUrl },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          return { status: 'error' as const, error: data?.detail || data?.error?.message || `HTTP ${res.status}` };
+        }
+        if (data.virtual_key) setVirtualKey(data.virtual_key);
+        return { status: 'ok' as const, email: data.email as string };
+      } catch (err: any) {
+        return { status: 'error' as const, error: err.message || 'Failed to reach the gateway' };
+      }
+    },
+    [gatewayUrl, setVirtualKey]
+  );
+
+  const registerUser = useCallback(
+    (email: string, password: string) => authRequest('register', email, password),
+    [authRequest]
+  );
+  const loginUser = useCallback(
+    (email: string, password: string) => authRequest('login', email, password),
+    [authRequest]
+  );
+
   useEffect(() => {
     let cancelled = false;
     if (!virtualKey) {
@@ -179,12 +216,14 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
       loadAdminKeyForEmail,
       saveAdminKeyForEmail,
       modelAllowlist,
+      registerUser,
+      loginUser,
     }),
     [
       gatewayUrl, adminKey, virtualKey, adminEmail,
       setGatewayUrl, setAdminKey, setVirtualKey, setAdminEmail,
       adminFetch, chatHeaders, loadAdminKeyForEmail, saveAdminKeyForEmail,
-      modelAllowlist,
+      modelAllowlist, registerUser, loginUser,
     ]
   );
 

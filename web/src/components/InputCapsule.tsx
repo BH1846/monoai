@@ -46,19 +46,20 @@ export default function InputCapsule({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const { config, adminFetch, modelAllowlist } = useGateway();
+  const { config, chatHeaders, modelAllowlist } = useGateway();
   const [registeredModels, setRegisteredModels] = useState<ModelOption[]>([]);
 
   // Populate the model picker from the gateway's live provider/model registry
   // (Providers tab) instead of the static mock catalog -- only "auto" from
-  // that catalog is retained.
+  // that catalog is retained. Uses the caller's virtual key (GET /v1/models),
+  // not the admin key -- that's what a regular chat user actually holds.
   useEffect(() => {
     let cancelled = false;
-    if (!config.adminKey) {
+    if (!config.virtualKey) {
       setRegisteredModels([]);
       return;
     }
-    adminFetch('models')
+    fetch('/api/models', { headers: chatHeaders() })
       .then(async (res) => {
         if (!res.ok || cancelled) return;
         const data = await res.json();
@@ -82,7 +83,7 @@ export default function InputCapsule({
     return () => {
       cancelled = true;
     };
-  }, [config.adminKey, adminFetch]);
+  }, [config.virtualKey, chatHeaders]);
 
   // Handle suggestion selection from parent
   useEffect(() => {

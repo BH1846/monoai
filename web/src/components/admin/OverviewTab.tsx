@@ -5,11 +5,9 @@ import {
   AlertTriangle,
   Search,
   UserCheck,
-  ChevronUp,
-  ChevronDown,
   Check
 } from 'lucide-react';
-import { UserRecord } from '../../types';
+import { VirtualKeyRecord } from '../../types';
 
 interface OverviewTabProps {
   stats: {
@@ -19,40 +17,36 @@ interface OverviewTabProps {
     activeRoles: number;
     activePolicies: number;
   };
-  users: UserRecord[];
+  keys: VirtualKeyRecord[];
+  keysLoading: boolean;
   alertThresholdPct: number;
   setAlertThresholdPct: (val: number) => void;
   dismissedAlertIds: string[];
   thresholdAlerts: Array<{
-    userId: string;
-    user: UserRecord;
+    keyId: string;
+    key: VirtualKeyRecord;
     percentage: number;
     isBreach: boolean;
   }>;
   activeAlertsCount: number;
   resetAlerts: () => void;
-  simulateTrafficForUser: (userId: string) => void;
-  dismissAlert: (userId: string) => void;
-  resetUserCost: (userId: string) => void;
+  dismissAlert: (keyId: string) => void;
   handleExportCSV: () => void;
-  updateUserCostLimit: (userId: string, limit: number) => void;
   showToast: (msg: string) => void;
 }
 
 export default function OverviewTab({
   stats,
-  users,
+  keys,
+  keysLoading,
   alertThresholdPct,
   setAlertThresholdPct,
   dismissedAlertIds,
   thresholdAlerts,
   activeAlertsCount,
   resetAlerts,
-  simulateTrafficForUser,
   dismissAlert,
-  resetUserCost,
   handleExportCSV,
-  updateUserCostLimit,
   showToast
 }: OverviewTabProps) {
   const [userSearchText, setUserSearchText] = useState('');
@@ -188,10 +182,10 @@ export default function OverviewTab({
               {activeAlertsCount > 0 ? (
                 <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                   {thresholdAlerts
-                    .filter(alert => !dismissedAlertIds.includes(alert.userId))
-                    .map(({ userId, user: u, percentage, isBreach }) => (
+                    .filter(alert => !dismissedAlertIds.includes(alert.keyId))
+                    .map(({ keyId, key: k, percentage, isBreach }) => (
                       <div
-                        key={userId}
+                        key={keyId}
                         className={`p-3 rounded-[1px] border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
                           isBreach
                             ? 'bg-rose-500/[0.03] border-rose-500/20 hover:bg-rose-500/[0.05]'
@@ -204,8 +198,8 @@ export default function OverviewTab({
                           </div>
                           <div>
                             <div className="flex items-center space-x-2 flex-wrap gap-1">
-                              <span className="text-xs font-semibold text-white/90">{u.name}</span>
-                              <span className="text-[9px] font-mono text-white/40">({u.email})</span>
+                              <span className="text-xs font-semibold text-white/90">{k.team_id || k.key_id}</span>
+                              <span className="text-[9px] font-mono text-white/40">({k.key_id})</span>
                               <span className={`text-[8px] font-mono font-bold px-1.5 py-0.2 border rounded-[1px] uppercase ${
                                 isBreach
                                   ? 'text-rose-400 border-rose-500/25 bg-rose-500/5'
@@ -215,34 +209,17 @@ export default function OverviewTab({
                               </span>
                             </div>
                             <div className="text-[10px] font-mono text-white/40 mt-0.5">
-                              Quota Consumption: <strong className={isBreach ? 'text-rose-400' : 'text-amber-400'}>${(u.totalCost || 0).toFixed(2)}</strong> of ${u.costLimit.toFixed(2)} limit ({percentage.toFixed(1)}%)
+                              Quota Consumption: <strong className={isBreach ? 'text-rose-400' : 'text-amber-400'}>${k.budget_usd_spent.toFixed(2)}</strong> of ${(k.budget_usd_monthly || 0).toFixed(2)} limit ({percentage.toFixed(1)}%)
                             </div>
                           </div>
                         </div>
 
                         <div className="flex items-center space-x-2 self-end sm:self-auto shrink-0">
                           <button
-                            onClick={() => simulateTrafficForUser(userId)}
-                            className="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 hover:text-white rounded-[1px] text-[10px] font-mono transition-all flex items-center space-x-1 cursor-pointer"
-                            title="Inject a spike of random user API queries"
-                          >
-                            <span>⚡ INJECT_SPEND</span>
-                          </button>
-                          <button
-                            onClick={() => dismissAlert(userId)}
+                            onClick={() => dismissAlert(keyId)}
                             className="px-2 py-1 bg-white/5 hover:bg-[#121620] border border-white/10 text-white/40 hover:text-white/80 rounded-[1px] text-[10px] font-mono transition-all cursor-pointer"
                           >
                             MUTE
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (window.confirm(`Are you sure you want to reset all token spend counters for ${u.name}?`)) {
-                                resetUserCost(userId);
-                              }
-                            }}
-                            className="px-2 py-1 border border-rose-500/10 hover:border-rose-500/20 bg-rose-500/5 text-rose-400 hover:text-rose-300 rounded-[1px] text-[10px] font-mono transition-all cursor-pointer"
-                          >
-                            RESET
                           </button>
                         </div>
                       </div>
@@ -293,62 +270,64 @@ export default function OverviewTab({
             </div>
 
             <div className="border border-white/[0.05] bg-[#04080d] divide-y divide-white/[0.04] rounded-[1px]">
-              {users
-                .filter(u => u.name.toLowerCase().includes(userSearchText.toLowerCase()) || u.email.toLowerCase().includes(userSearchText.toLowerCase()))
-                .map(u => {
-                  const limitPct = (u.costLimit || 0) > 0 ? ((u.totalCost || 0) / (u.costLimit || 0)) * 100 : 0;
+              {keysLoading && keys.length === 0 && (
+                <div className="p-8 text-center text-white/30 font-mono text-xs">Loading operators...</div>
+              )}
+              {!keysLoading && keys.length === 0 && (
+                <div className="p-8 text-center text-white/30 font-mono text-xs">
+                  No virtual keys registered yet -- create one in the Users tab to see budget telemetry here.
+                </div>
+              )}
+              {keys
+                .filter(k => (k.team_id || '').toLowerCase().includes(userSearchText.toLowerCase()) || k.key_id.toLowerCase().includes(userSearchText.toLowerCase()))
+                .map(k => {
+                  const monthly = k.budget_usd_monthly || 0;
+                  const limitPct = monthly > 0 ? (k.budget_usd_spent / monthly) * 100 : 0;
                   return (
-                    <div key={u.id} className="p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-white/[0.01] transition-colors">
-                      
-                      {/* Left: User metadata */}
+                    <div key={k.key_id} className="p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-white/[0.01] transition-colors">
+
+                      {/* Left: Key/operator metadata */}
                       <div className="flex items-center space-x-3 min-w-0">
                         <div className="p-1.5 bg-white/5 rounded-[1px]">
-                          <UserCheck size={14} className={u.status === 'active' ? 'text-indigo-400' : 'text-white/20'} />
+                          <UserCheck size={14} className={k.active ? 'text-indigo-400' : 'text-white/20'} />
                         </div>
                         <div>
                           <div className="flex items-center space-x-2">
-                            <span className="text-xs font-semibold text-white/90">{u.name}</span>
+                            <span className="text-xs font-semibold text-white/90">{k.team_id || k.key_id}</span>
                             <span className="text-[8px] font-mono px-1 py-0.2 bg-white/5 border border-white/10 text-white/40 rounded-[1px] uppercase">
-                              {u.role}
+                              {k.policy_id}
                             </span>
+                            {!k.active && (
+                              <span className="text-[8px] font-mono px-1 py-0.2 bg-white/5 border border-white/10 text-white/35 rounded-[1px] uppercase">
+                                REVOKED
+                              </span>
+                            )}
                           </div>
-                          <span className="text-[10px] font-mono text-white/40 block truncate">{u.email}</span>
+                          <span className="text-[10px] font-mono text-white/40 block truncate">{k.key_id}</span>
                         </div>
                       </div>
 
-                      {/* Center Left: Token usage details */}
-                      <div className="grid grid-cols-2 gap-4 shrink-0 font-mono text-right">
-                        <div>
-                          <div className="text-[10px] text-white/30 uppercase">Tokens Consumed</div>
-                          <div className="text-xs font-semibold text-indigo-300">
-                            {((u.inputTokens || 0) + (u.outputTokens || 0)).toLocaleString()}
-                          </div>
-                          <div className="text-[8px] text-white/20">
-                            {u.inputTokens?.toLocaleString()} in / {u.outputTokens?.toLocaleString()} out
-                          </div>
+                      {/* Center: Cost telemetry */}
+                      <div className="shrink-0 font-mono text-right">
+                        <div className="text-[10px] text-white/30 uppercase">Cost Spent</div>
+                        <div className={`text-xs font-bold ${limitPct >= 100 ? 'text-rose-400' : limitPct >= 85 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                          ${k.budget_usd_spent.toFixed(2)}
                         </div>
-
-                        <div>
-                          <div className="text-[10px] text-white/30 uppercase">Cost Spent</div>
-                          <div className={`text-xs font-bold ${limitPct >= 100 ? 'text-rose-400' : limitPct >= 85 ? 'text-amber-400' : 'text-emerald-400'}`}>
-                            ${(u.totalCost || 0).toFixed(2)}
-                          </div>
-                          <div className="text-[8px] text-white/20">
-                            of ${(u.costLimit || 0).toFixed(2)} Limit
-                          </div>
+                        <div className="text-[8px] text-white/20">
+                          {monthly > 0 ? `of $${monthly.toFixed(2)} limit` : 'unlimited'}
                         </div>
                       </div>
 
-                      {/* Center Right: ProgressBar & interactive limit slider */}
+                      {/* Right: ProgressBar */}
                       <div className="w-full md:w-48 space-y-1">
                         <div className="flex items-center justify-between text-[9px] font-mono text-white/40">
                           <span>Budget Usage</span>
                           <span className={limitPct >= 100 ? 'text-rose-400 font-bold' : 'text-white/60'}>
-                            {limitPct.toFixed(0)}%
+                            {monthly > 0 ? `${limitPct.toFixed(0)}%` : '—'}
                           </span>
                         </div>
                         <div className="w-full bg-white/[0.04] h-1.5 rounded-[1px] overflow-hidden relative">
-                          <div 
+                          <div
                             className={`h-full rounded-[1px] transition-all duration-300 ${
                               limitPct >= 100 ? 'bg-rose-500 animate-pulse' : limitPct >= 85 ? 'bg-amber-400' : 'bg-emerald-500'
                             }`}
@@ -363,79 +342,10 @@ export default function OverviewTab({
                         )}
                       </div>
 
-                      {/* Right: Inline Limit Editor & spent cost reset */}
-                      <div className="flex items-center space-x-3 shrink-0 self-end md:self-auto">
-                        <div className="flex items-center space-x-1.5 bg-black/30 border border-white/5 rounded-[1px] p-1">
-                          <span className="text-[10px] font-mono text-white/30">$</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="5"
-                            value={u.costLimit || 0}
-                            onChange={(e) => updateUserCostLimit(u.id, parseFloat(e.target.value) || 0)}
-                            className="w-11 bg-transparent text-[11px] font-mono text-white text-center focus:outline-none"
-                            title="Tweak limits inline"
-                          />
-                          <div className="flex flex-col space-y-0.5">
-                            <button 
-                              onClick={() => updateUserCostLimit(u.id, (u.costLimit || 0) + 5)}
-                              className="p-0.5 hover:bg-white/10 rounded-[1px] text-white/50 hover:text-white"
-                            >
-                              <ChevronUp size={8} />
-                            </button>
-                            <button 
-                              onClick={() => updateUserCostLimit(u.id, Math.max(0, (u.costLimit || 0) - 5))}
-                              className="p-0.5 hover:bg-white/10 rounded-[1px] text-white/50 hover:text-white"
-                            >
-                              <ChevronDown size={8} />
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center space-x-1">
-                          {/* Preset Buttons */}
-                          {[25, 50, 100].map(pVal => (
-                            <button
-                              key={pVal}
-                              onClick={() => updateUserCostLimit(u.id, pVal)}
-                              className={`px-1.5 py-0.5 rounded-[1px] border text-[9px] font-mono transition-all ${
-                                u.costLimit === pVal 
-                                  ? 'border-indigo-500/40 bg-indigo-500/10 text-indigo-300' 
-                                  : 'border-white/5 bg-white/5 text-white/50 hover:text-white hover:bg-white/10'
-                              }`}
-                            >
-                              ${pVal}
-                            </button>
-                          ))}
-                        </div>
-
-                        {/* Simulate Traffic Button */}
-                        <button
-                          onClick={() => simulateTrafficForUser(u.id)}
-                          className="p-1.5 border border-amber-500/15 hover:border-amber-500/35 hover:bg-amber-500/5 text-amber-400 hover:text-amber-300 rounded-[1px] text-[9px] font-mono transition-all cursor-pointer"
-                          title="Simulate LLM request consumption to trigger threshold alarm"
-                        >
-                          SIMULATE
-                        </button>
-
-                        {/* Reset Spent Button */}
-                        <button
-                          onClick={() => {
-                            if (window.confirm(`Are you sure you want to reset accumulated spend and tokens back to 0 for ${u.name}?`)) {
-                              resetUserCost(u.id);
-                            }
-                          }}
-                          className="p-1.5 border border-rose-500/10 hover:border-rose-500/30 hover:bg-rose-500/5 text-rose-400 hover:text-rose-300 rounded-[1px] text-[9px] font-mono transition-all"
-                          title="Reset Spent Accumulator"
-                        >
-                          RESET
-                        </button>
-                      </div>
-
                     </div>
                   );
                 })}
-              {users.filter(u => u.name.toLowerCase().includes(userSearchText.toLowerCase()) || u.email.toLowerCase().includes(userSearchText.toLowerCase())).length === 0 && (
+              {keys.length > 0 && keys.filter(k => (k.team_id || '').toLowerCase().includes(userSearchText.toLowerCase()) || k.key_id.toLowerCase().includes(userSearchText.toLowerCase())).length === 0 && (
                 <div className="p-8 text-center text-white/30 font-mono text-xs">
                   No operators matching "{userSearchText}" found in gateway roster.
                 </div>

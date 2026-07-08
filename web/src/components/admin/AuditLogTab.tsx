@@ -20,6 +20,9 @@ interface AuditLogTabProps {
   expandedEventId: string | null;
   setExpandedEventId: (id: string | null) => void;
   showToast: (msg: string) => void;
+  auditLoading: boolean;
+  auditLoadError: string | null;
+  onRefresh: () => void;
 }
 
 export default function AuditLogTab({
@@ -29,7 +32,10 @@ export default function AuditLogTab({
   filteredAuditEvents,
   expandedEventId,
   setExpandedEventId,
-  showToast
+  showToast,
+  auditLoading,
+  auditLoadError,
+  onRefresh
 }: AuditLogTabProps) {
   return (
     <div className="space-y-4">
@@ -41,15 +47,28 @@ export default function AuditLogTab({
             <SlidersHorizontal size={13} className="text-white/40" />
             <span className="text-[10px] font-mono font-bold tracking-widest text-white/50 uppercase">Filter Audit Stream</span>
           </div>
-          <button
-            onClick={() => {
-              setAuditFilters({ decision: 'ALL', rule: 'ALL', user: 'ALL', search: '' });
-              showToast('Audit log filters reset');
-            }}
-            className="text-[10px] font-mono text-rose-400/80 hover:text-rose-400 transition-colors cursor-pointer"
-          >
-            Reset Filter Parameters
-          </button>
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => {
+                onRefresh();
+                showToast('Refreshing audit stream...');
+              }}
+              disabled={auditLoading}
+              className="flex items-center space-x-1.5 text-[10px] font-mono text-white/50 hover:text-white/80 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <RefreshCw size={11} className={auditLoading ? 'animate-spin' : ''} />
+              <span>Refresh</span>
+            </button>
+            <button
+              onClick={() => {
+                setAuditFilters({ decision: 'ALL', rule: 'ALL', user: 'ALL', search: '' });
+                showToast('Audit log filters reset');
+              }}
+              className="text-[10px] font-mono text-rose-400/80 hover:text-rose-400 transition-colors cursor-pointer"
+            >
+              Reset Filter Parameters
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
@@ -126,7 +145,19 @@ export default function AuditLogTab({
             </tr>
           </thead>
           <tbody className="divide-y divide-white/[0.04]">
-            {filteredAuditEvents.length === 0 ? (
+            {auditLoadError ? (
+              <tr>
+                <td colSpan={6} className="p-8 text-center text-rose-400/80 font-mono text-xs">
+                  Failed to load audit log: {auditLoadError}
+                </td>
+              </tr>
+            ) : auditLoading && filteredAuditEvents.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="p-8 text-center text-white/30 font-mono text-xs">
+                  Loading audit stream...
+                </td>
+              </tr>
+            ) : filteredAuditEvents.length === 0 ? (
               <tr>
                 <td colSpan={6} className="p-8 text-center text-white/30 font-mono text-xs">
                   No events logged yet matching filter parameters. Activity will appear here once requests start flowing.
