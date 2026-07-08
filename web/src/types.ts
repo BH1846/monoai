@@ -109,19 +109,6 @@ export interface AuditEvent {
   detail: string;
 }
 
-export interface UserRecord {
-  id: string;
-  name: string;
-  email: string;
-  role: string;
-  lastActive: string;
-  status: 'active' | 'disabled';
-  totalCost: number;     // accumulated cost in USD
-  costLimit: number;     // monthly limit in USD
-  inputTokens: number;   // total input tokens consumed
-  outputTokens: number;  // total output tokens consumed
-}
-
 export interface RbacMatrix {
   [role: string]: {
     [modelOrCapability: string]: boolean;

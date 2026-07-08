@@ -1,39 +1,47 @@
 import React, { useState } from 'react';
 import { Shield, Eye, EyeOff } from 'lucide-react';
+import { useGateway } from '../context/GatewayContext';
 
 interface SignInProps {
   onSignIn: (email: string, role: 'admin' | 'user') => void;
 }
 
 export default function SignIn({ onSignIn }: SignInProps) {
+  const { registerUser, loginUser } = useGateway();
   const [loginTab, setLoginTab] = useState<'user' | 'admin'>('user');
+  const [userMode, setUserMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const resetFields = () => {
+    setEmail('');
+    setPassword('');
+    setConfirmPassword('');
+    setError(null);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
     const inputEmail = email.trim();
     const inputPass = password.trim();
 
-    // Defensive input check
     if (!inputEmail || !inputPass) {
       setError('Incorrect email or password.');
       return;
     }
 
-    setIsSubmitting(true);
-
-    // Simulate precise enterprise network delay
-    setTimeout(() => {
-      const normalizedEmail = inputEmail.toLowerCase();
-      
-      if (loginTab === 'admin') {
-        // Dedicated admin credentials
+    if (loginTab === 'admin') {
+      setIsSubmitting(true);
+      // Dedicated admin credentials -- single shared operator secret, not a
+      // per-admin account system (see gateway/auth/admin_account_store.py).
+      setTimeout(() => {
+        const normalizedEmail = inputEmail.toLowerCase();
         if (
           (normalizedEmail === 'admin@mono.ai' && inputPass === 'admin') ||
           (normalizedEmail === 'engineer@mono.ai' && inputPass === 'governance2026')
@@ -42,19 +50,36 @@ export default function SignIn({ onSignIn }: SignInProps) {
         } else {
           setError('Invalid administrator credentials or role clearance failed.');
         }
-      } else {
-        // Standard user credentials
-        if (
-          (normalizedEmail === 'user' && inputPass === 'user') ||
-          (normalizedEmail === 'dev' && inputPass === 'dev')
-        ) {
-          onSignIn(inputEmail, 'user');
-        } else {
-          setError('Invalid user credentials or gateway access denied.');
-        }
-      }
-      setIsSubmitting(false);
-    }, 600);
+        setIsSubmitting(false);
+      }, 600);
+      return;
+    }
+
+    // Real user accounts: POST /v1/auth/register or /v1/auth/login (see
+    // gateway/api/auth.py). Registering auto-creates a virtual key for the
+    // new account, and both paths hand it back so useGateway()'s
+    // registerUser/loginUser can populate the session immediately --
+    // signing up is enough to start chatting, no admin step required.
+    if (userMode === 'register' && inputPass !== confirmPassword.trim()) {
+      setError('Passwords do not match.');
+      return;
+    }
+    if (userMode === 'register' && inputPass.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    const result = userMode === 'register'
+      ? await registerUser(inputEmail, inputPass)
+      : await loginUser(inputEmail, inputPass);
+    setIsSubmitting(false);
+
+    if (result.status === 'ok') {
+      onSignIn(result.email, 'user');
+    } else {
+      setError(result.error);
+    }
   };
 
   return (
@@ -74,15 +99,17 @@ export default function SignIn({ onSignIn }: SignInProps) {
 
         {/* Center centered form block */}
         <div className="my-auto py-12 md:py-0 flex flex-col justify-center max-w-[360px] w-full mx-auto animate-fadeIn" style={{ animationDelay: '50ms' }}>
-          
+
           <div className="space-y-2 mb-6">
             <h1 className="text-xl font-medium tracking-tight text-white select-none">
-              Sign in to MonoAI
+              {loginTab === 'user' && userMode === 'register' ? 'Create your MonoAI account' : 'Sign in to MonoAI'}
             </h1>
             <p className="text-xs text-white/40 leading-relaxed select-none">
-              {loginTab === 'admin' 
-                ? 'Accessing secure out-of-band security control plane console.' 
-                : 'Accessing the model inference and proxy gateway portal.'}
+              {loginTab === 'admin'
+                ? 'Accessing secure out-of-band security control plane console.'
+                : userMode === 'register'
+                  ? 'A virtual key is created automatically -- you can start chatting right after signing up.'
+                  : 'Accessing the model inference and proxy gateway portal.'}
             </p>
           </div>
 
@@ -92,9 +119,7 @@ export default function SignIn({ onSignIn }: SignInProps) {
               type="button"
               onClick={() => {
                 setLoginTab('user');
-                setEmail('');
-                setPassword('');
-                setError(null);
+                resetFields();
               }}
               className={`py-1.5 text-[10px] font-mono tracking-wider transition-all rounded-[1px] font-bold ${
                 loginTab === 'user'
@@ -108,9 +133,7 @@ export default function SignIn({ onSignIn }: SignInProps) {
               type="button"
               onClick={() => {
                 setLoginTab('admin');
-                setEmail('');
-                setPassword('');
-                setError(null);
+                resetFields();
               }}
               className={`py-1.5 text-[10px] font-mono tracking-wider transition-all rounded-[1px] font-bold ${
                 loginTab === 'admin'
@@ -122,9 +145,33 @@ export default function SignIn({ onSignIn }: SignInProps) {
             </button>
           </div>
 
+          {loginTab === 'user' && (
+            <div className="flex items-center justify-center space-x-1 mb-5 text-[11px] font-mono select-none">
+              <button
+                type="button"
+                onClick={() => { setUserMode('login'); setError(null); }}
+                className={`px-2.5 py-1 rounded-[1px] transition-all cursor-pointer ${
+                  userMode === 'login' ? 'text-white font-bold border-b border-indigo-400' : 'text-white/35 hover:text-white/60'
+                }`}
+              >
+                Log In
+              </button>
+              <span className="text-white/15">/</span>
+              <button
+                type="button"
+                onClick={() => { setUserMode('register'); setError(null); }}
+                className={`px-2.5 py-1 rounded-[1px] transition-all cursor-pointer ${
+                  userMode === 'register' ? 'text-white font-bold border-b border-indigo-400' : 'text-white/35 hover:text-white/60'
+                }`}
+              >
+                Register
+              </button>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
-              <div 
+              <div
                 className="p-3 bg-red-950/25 border border-red-500/30 text-red-400 text-xs font-mono rounded-[2px] leading-relaxed flex items-start space-x-2 animate-fadeIn"
                 id="signin-error"
               >
@@ -135,11 +182,11 @@ export default function SignIn({ onSignIn }: SignInProps) {
 
             <div className="space-y-1.5">
               <label className="block text-xs font-medium text-white/60 select-none">
-                {loginTab === 'admin' ? 'Administrator Email' : 'Operator Username'}
+                {loginTab === 'admin' ? 'Administrator Email' : 'Email'}
               </label>
               <input
                 id="email-field"
-                type="text"
+                type={loginTab === 'admin' ? 'text' : 'email'}
                 autoComplete="email"
                 required
                 value={email}
@@ -148,7 +195,7 @@ export default function SignIn({ onSignIn }: SignInProps) {
                   if (error) setError(null);
                 }}
                 disabled={isSubmitting}
-                placeholder={loginTab === 'admin' ? 'admin@mono.ai' : 'user'}
+                placeholder={loginTab === 'admin' ? 'admin@mono.ai' : 'you@company.com'}
                 className="w-full px-3 py-2 bg-[#0c121a]/60 border border-white/[0.08] rounded-[2px] text-xs text-white/90 placeholder-white/20 focus:border-indigo-500/50 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 transition-all font-mono"
               />
             </div>
@@ -163,7 +210,7 @@ export default function SignIn({ onSignIn }: SignInProps) {
                 <input
                   id="password-field"
                   type={showPassword ? 'text' : 'password'}
-                  autoComplete="current-password"
+                  autoComplete={loginTab === 'user' && userMode === 'register' ? 'new-password' : 'current-password'}
                   required
                   value={password}
                   onChange={(e) => {
@@ -185,6 +232,28 @@ export default function SignIn({ onSignIn }: SignInProps) {
               </div>
             </div>
 
+            {loginTab === 'user' && userMode === 'register' && (
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-white/60 select-none">
+                  Confirm Passkey
+                </label>
+                <input
+                  id="confirm-password-field"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  required
+                  value={confirmPassword}
+                  onChange={(e) => {
+                    setConfirmPassword(e.target.value);
+                    if (error) setError(null);
+                  }}
+                  disabled={isSubmitting}
+                  placeholder="••••••••••••"
+                  className="w-full px-3 py-2 bg-[#0c121a]/60 border border-white/[0.08] rounded-[2px] text-xs text-white/90 placeholder-white/20 focus:border-indigo-500/50 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 transition-all font-mono"
+                />
+              </div>
+            )}
+
             <button
               id="signin-btn"
               type="submit"
@@ -195,33 +264,55 @@ export default function SignIn({ onSignIn }: SignInProps) {
                   : 'bg-white hover:bg-white/95 text-[#0A0E14] focus:ring-indigo-500'
               } disabled:bg-white/20 disabled:text-white/40 disabled:cursor-not-allowed`}
             >
-              {isSubmitting 
-                ? (loginTab === 'admin' ? 'Authorizing admin token...' : 'Verifying gateway node...') 
-                : (loginTab === 'admin' ? 'Access Control Plane' : 'Connect to Gateway')}
+              {loginTab === 'admin'
+                ? (isSubmitting ? 'Authorizing admin token...' : 'Access Control Plane')
+                : userMode === 'register'
+                  ? (isSubmitting ? 'Creating account...' : 'Create Account & Connect')
+                  : (isSubmitting ? 'Verifying gateway node...' : 'Connect to Gateway')}
             </button>
           </form>
 
-          {/* Dynamic helper card for current credentials */}
-          <div className="mt-6 pt-5 border-t border-white/[0.03] text-[10px] font-mono text-white/30 space-y-2 select-none">
-            <span className="text-indigo-400 font-semibold block uppercase tracking-wider">
-              {loginTab === 'admin' ? 'Admin Clearances Available:' : 'User Gateway Credentials:'}
-            </span>
-            {loginTab === 'admin' ? (
+          {/* Dynamic helper card */}
+          {loginTab === 'admin' ? (
+            <div className="mt-6 pt-5 border-t border-white/[0.03] text-[10px] font-mono text-white/30 space-y-2 select-none">
+              <span className="text-indigo-400 font-semibold block uppercase tracking-wider">
+                Admin Clearances Available:
+              </span>
               <div className="space-y-1 bg-rose-500/5 border border-rose-500/10 p-2 rounded-[1px]">
                 <div>Operator: <strong className="text-rose-300 font-bold select-all">admin@mono.ai</strong></div>
                 <div>Passkey: <strong className="text-white/70">admin</strong></div>
                 <div className="pt-1.5 mt-1 border-t border-white/5">Operator: <strong className="text-rose-300 font-bold select-all">engineer@mono.ai</strong></div>
                 <div>Passkey: <strong className="text-white/70">governance2026</strong></div>
               </div>
-            ) : (
-              <div className="space-y-1 bg-white/[0.02] border border-white/5 p-2 rounded-[1px]">
-                <div>Identity: <strong className="text-indigo-300 font-bold select-all">user</strong></div>
-                <div>Passkey: <strong className="text-white/70">user</strong></div>
-                <div className="pt-1.5 mt-1 border-t border-white/5">Identity: <strong className="text-indigo-300 font-bold select-all">dev</strong></div>
-                <div>Passkey: <strong className="text-white/70">dev</strong></div>
-              </div>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className="mt-6 pt-5 border-t border-white/[0.03] text-[10px] text-white/30 select-none">
+              {userMode === 'login' ? (
+                <span>
+                  Don't have an account?{' '}
+                  <button
+                    type="button"
+                    onClick={() => { setUserMode('register'); setError(null); }}
+                    className="text-indigo-400 hover:text-indigo-300 hover:underline transition-all font-medium cursor-pointer"
+                  >
+                    Register
+                  </button>{' '}
+                  -- a virtual key is issued automatically.
+                </span>
+              ) : (
+                <span>
+                  Already have an account?{' '}
+                  <button
+                    type="button"
+                    onClick={() => { setUserMode('login'); setError(null); }}
+                    className="text-indigo-400 hover:text-indigo-300 hover:underline transition-all font-medium cursor-pointer"
+                  >
+                    Log in
+                  </button>
+                </span>
+              )}
+            </div>
+          )}
 
         </div>
 

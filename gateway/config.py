@@ -83,6 +83,14 @@ class Settings:
     key_store_postgres_dsn: str | None = field(default_factory=lambda: os.environ.get("KEY_STORE_POSTGRES_DSN") or None)
     provider_store_path: str = field(default_factory=lambda: os.environ.get("PROVIDER_STORE_PATH", "./gateway_providers.sqlite"))
     admin_account_store_path: str = field(default_factory=lambda: os.environ.get("ADMIN_ACCOUNT_STORE_PATH", "./gateway_admin_accounts.sqlite"))
+    user_account_store_path: str = field(default_factory=lambda: os.environ.get("USER_ACCOUNT_STORE_PATH", "./gateway_user_accounts.sqlite"))
+    # Default monthly budget cap auto-applied to self-registered accounts
+    # (POST /v1/auth/register) -- admin-created keys via /v1/admin/keys are
+    # unaffected. Keeps unauthenticated self-signup from being a blank check
+    # against upstream LLM spend; set to "" / 0 for no cap.
+    self_serve_budget_usd_monthly: float | None = field(
+        default_factory=lambda: float(v) if (v := os.environ.get("SELF_SERVE_BUDGET_USD_MONTHLY", "20")) else None
+    )
 
     # -- audit --
     audit_log_path: str = field(default_factory=lambda: os.environ.get("MONOAI_AUDIT_LOG_PATH", "./gateway_audit.jsonl"))

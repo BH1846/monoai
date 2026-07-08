@@ -168,6 +168,35 @@ async def chat_completions(
     return StreamingResponse(_sse(), media_type="text/event-stream")
 
 
+@router.get("/v1/models")
+async def list_models(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> Any:
+    """Lets a caller holding only a virtual key (no admin key) see which
+    admin-registered models (Providers tab -> POST /v1/admin/models) it's
+    actually allowed to call, without needing GET /v1/admin/models. Backs
+    the chat UI's model picker/directory (ModelsDirectory.tsx, InputCapsule.tsx)."""
+    key = authenticate(authorization, request.app.state.key_store)
+    provider_store = request.app.state.provider_store
+    provider_enabled = {p.provider_id: p.enabled for p in provider_store.list_providers()}
+
+    models = []
+    for m in provider_store.list_models():
+        if not m.enabled or not provider_enabled.get(m.provider_id, False):
+            continue
+        if key.model_allowlist is not None and m.model_id not in key.model_allowlist:
+            continue
+        models.append({
+            "model_id": m.model_id,
+            "provider_name": m.provider_name,
+            "upstream_model": m.upstream_model,
+            "display_name": m.display_name,
+            "enabled": m.enabled,
+        })
+    return {"models": models}
+
+
 @router.get("/v1/me")
 async def whoami(
     request: Request,

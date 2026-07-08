@@ -34,7 +34,7 @@ export default function ModelsDirectory({
   onChangeModel,
   onRequestPaidFlow
 }: ModelsDirectoryProps) {
-  const { config, adminFetch, modelAllowlist } = useGateway();
+  const { config, chatHeaders, modelAllowlist } = useGateway();
 
   const [registeredModels, setRegisteredModels] = useState<ModelOption[]>([]);
   const [loading, setLoading] = useState(false);
@@ -55,15 +55,18 @@ export default function ModelsDirectory({
   } | null>(null);
 
   // Load the live model registry (same source as the chat input's model
-  // picker) instead of the static mock catalog.
+  // picker) instead of the static mock catalog. Uses the caller's virtual
+  // key (GET /v1/models), not the admin key -- this is what a regular user
+  // actually holds, and it's already filtered server-side to models that
+  // key's own model_allowlist permits.
   const loadModels = useCallback(() => {
-    if (!config.adminKey) {
+    if (!config.virtualKey) {
       setRegisteredModels([]);
       return;
     }
     setLoading(true);
     setLoadError(null);
-    adminFetch('models')
+    fetch('/api/models', { headers: chatHeaders() })
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -90,7 +93,7 @@ export default function ModelsDirectory({
         setLoadError(err.message || 'Failed to load models from the gateway');
       })
       .finally(() => setLoading(false));
-  }, [config.adminKey, adminFetch]);
+  }, [config.virtualKey, chatHeaders]);
 
   useEffect(() => {
     loadModels();
@@ -278,11 +281,11 @@ export default function ModelsDirectory({
         {/* Left Side: Directory Filters & Cards */}
         <div className="flex-1 flex flex-col space-y-4">
 
-          {!config.adminKey && (
+          {!config.virtualKey && (
             <div className="bg-[#070b11] border border-amber-500/20 p-6 rounded-[2px] text-center space-y-2">
               <AlertTriangle className="mx-auto text-amber-400" size={20} />
-              <p className="text-sm text-white/70">No admin key configured for this session.</p>
-              <p className="text-xs text-white/40">Go to Admin &gt; Settings and paste your gateway's admin key to see registered providers/models here.</p>
+              <p className="text-sm text-white/70">No virtual key configured for this session.</p>
+              <p className="text-xs text-white/40">Go to Admin &gt; Settings and paste a virtual key to see registered providers/models here.</p>
             </div>
           )}
 

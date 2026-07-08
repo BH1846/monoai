@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   LayoutDashboard,
   ShieldCheck,
@@ -11,7 +11,8 @@ import {
   Activity,
   Check
 } from 'lucide-react';
-import { AdminTab, AuditEvent, UserRecord, RbacMatrix } from '../../types';
+import { AdminTab, AuditEvent, VirtualKeyRecord, RbacMatrix } from '../../types';
+import { useGateway } from '../../context/GatewayContext';
 
 // Import our newly extracted modular tabs
 import OverviewTab from './OverviewTab';
@@ -31,174 +32,6 @@ interface AdminDashboardProps {
 // ----------------------------------------------------
 // INITIAL MOCK DATA
 // ----------------------------------------------------
-const INITIAL_AUDIT_EVENTS: AuditEvent[] = [
-  {
-    id: 'evt-101',
-    timestamp: '2026-06-26T08:45:12Z',
-    decision: 'BLOCKED',
-    rule: 'SECRET_SCAN',
-    user: 'rahulbalaskandan1511@gmail.com',
-    model: 'gemini-3.5-flash',
-    detail: 'DLP high-entropy matching triggered for "AWS_SECRET_ACCESS_KEY" in database connection query.'
-  },
-  {
-    id: 'evt-102',
-    timestamp: '2026-06-26T08:40:05Z',
-    decision: 'REDACTED',
-    rule: 'PII_SCAN',
-    user: 'sjenkins@monoai.io',
-    model: 'gpt-4o',
-    detail: 'Masked Social Security Number (SSN: ***-**-****) and outbound email from marketing pitch input.'
-  },
-  {
-    id: 'evt-103',
-    timestamp: '2026-06-26T08:31:42Z',
-    decision: 'ALLOWED',
-    rule: 'RBAC',
-    user: 'alex_rivera@monoai.io',
-    model: 'claude-3-5-sonnet',
-    detail: 'Successful routed proxy through Auto-Routing Gateway with valid standard developer scope.'
-  },
-  {
-    id: 'evt-104',
-    timestamp: '2026-06-26T08:22:15Z',
-    decision: 'BLOCKED',
-    rule: 'CODE_VULN',
-    user: 'dchen@monoai.io',
-    model: 'gemini-1.5-pro',
-    detail: 'Neutralized SQL injection pattern "UNION SELECT username, password FROM users" in database optimization script.'
-  },
-  {
-    id: 'evt-105',
-    timestamp: '2026-06-26T07:54:33Z',
-    decision: 'REDACTED',
-    rule: 'PII_SCAN',
-    user: 'customer_support_api',
-    model: 'gemini-3.5-flash',
-    detail: 'Automatically redacted customer phone numbers (+1 555-0192) inside high-volume log inputs.'
-  },
-  {
-    id: 'evt-106',
-    timestamp: '2026-06-26T07:11:02Z',
-    decision: 'ALLOWED',
-    rule: 'SECRET_SCAN',
-    user: 'rahulbalaskandan1511@gmail.com',
-    model: 'gemini-3.5-flash',
-    detail: 'Clear entropy scan. Request successfully dispatched to dynamic inference pool.'
-  },
-  {
-    id: 'evt-107',
-    timestamp: '2026-06-26T06:40:59Z',
-    decision: 'BLOCKED',
-    rule: 'RBAC',
-    user: 'guest_sandbox',
-    model: 'o1-pro',
-    detail: 'Access denied. Guest scope does not permit execution of reasoning-trace high-fidelity models (o1-pro).'
-  },
-  {
-    id: 'evt-108',
-    timestamp: '2026-06-26T05:12:14Z',
-    decision: 'REDACTED',
-    rule: 'PII_SCAN',
-    user: 'sjenkins@monoai.io',
-    model: 'gpt-4o',
-    detail: 'Masked outbound personal physical address fields from validation payload.'
-  },
-  {
-    id: 'evt-109',
-    timestamp: '2026-06-26T04:30:11Z',
-    decision: 'ALLOWED',
-    rule: 'RBAC',
-    user: 'alex_rivera@monoai.io',
-    model: 'gemini-3.5-flash',
-    detail: 'Cleared standard routing verification for local workspace model dispatch.'
-  },
-  {
-    id: 'evt-110',
-    timestamp: '2026-06-26T03:02:44Z',
-    decision: 'BLOCKED',
-    rule: 'SECRET_SCAN',
-    user: 'ci_pipeline_bot',
-    model: 'gemini-3.5-flash',
-    detail: 'DLP scanner matched high-entropy Stripe secret key "sk_test_..." in configuration deployment test.'
-  }
-];
-
-const INITIAL_USERS: UserRecord[] = [
-  {
-    id: 'usr-1',
-    name: 'Rahul Balaskandan',
-    email: 'rahulbalaskandan1511@gmail.com',
-    role: 'Administrator',
-    lastActive: '2026-06-26 08:50:22',
-    status: 'active',
-    totalCost: 12.45,
-    costLimit: 50.00,
-    inputTokens: 412000,
-    outputTokens: 184000
-  },
-  {
-    id: 'usr-2',
-    name: 'Sarah Jenkins',
-    email: 'sjenkins@monoai.io',
-    role: 'Compliance Officer',
-    lastActive: '2026-06-26 08:41:00',
-    status: 'active',
-    totalCost: 8.12,
-    costLimit: 25.00,
-    inputTokens: 250000,
-    outputTokens: 110000
-  },
-  {
-    id: 'usr-3',
-    name: 'Alex Rivera',
-    email: 'alex_rivera@monoai.io',
-    role: 'Developer',
-    lastActive: '2026-06-26 08:32:15',
-    status: 'active',
-    totalCost: 19.95,
-    costLimit: 20.00,
-    inputTokens: 680000,
-    outputTokens: 310000
-  },
-  {
-    id: 'usr-4',
-    name: 'David Chen',
-    email: 'dchen@monoai.io',
-    role: 'Developer',
-    lastActive: '2026-06-26 08:24:45',
-    status: 'active',
-    totalCost: 35.60,
-    costLimit: 30.00,
-    inputTokens: 1240000,
-    outputTokens: 520000
-  },
-  {
-    id: 'usr-5',
-    name: 'CI Integration Bot',
-    email: 'ci_pipeline_bot',
-    role: 'API Service Account',
-    lastActive: '2026-06-26 03:02:44',
-    status: 'active',
-    totalCost: 4.88,
-    costLimit: 100.00,
-    inputTokens: 180000,
-    outputTokens: 95000
-  },
-  {
-    id: 'usr-6',
-    name: 'Guest Sandbox',
-    email: 'guest_sandbox',
-    role: 'Guest Observer',
-    lastActive: '2026-06-26 06:40:59',
-    status: 'disabled',
-    totalCost: 0.00,
-    costLimit: 10.00,
-    inputTokens: 0,
-    outputTokens: 0
-  }
-];
-
 const INITIAL_RBAC_MATRIX: RbacMatrix = {
   'Administrator': {
     'gemini-3.5-flash': true,
@@ -280,11 +113,67 @@ export default function AdminDashboard({
   userEmail = "rahulbalaskandan1511@gmail.com"
 }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
+  const { config, adminFetch } = useGateway();
 
   // Unified State
-  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>(INITIAL_AUDIT_EVENTS);
-  const [users, setUsers] = useState<UserRecord[]>(INITIAL_USERS);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditLoadError, setAuditLoadError] = useState<string | null>(null);
   const [rbacMatrix, setRbacMatrix] = useState<RbacMatrix>(INITIAL_RBAC_MATRIX);
+
+  // Real audit trail (gateway/api/evidence.py GET /v1/evidence/export via
+  // our own /api/admin/audit-log, which flattens the hash-chained NDJSON
+  // bundle into the AuditEvent[] shape AuditLogTab.tsx renders).
+  const loadAuditEvents = useCallback(async () => {
+    setAuditLoading(true);
+    setAuditLoadError(null);
+    try {
+      const res = await adminFetch('audit-log');
+      if (res.ok) {
+        const data = await res.json();
+        setAuditEvents(data.events || []);
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setAuditLoadError(body?.error?.message || `HTTP ${res.status}`);
+      }
+    } catch (err: any) {
+      setAuditLoadError(err.message || 'Failed to load audit log');
+    } finally {
+      setAuditLoading(false);
+    }
+  }, [adminFetch]);
+
+  useEffect(() => {
+    if (config.adminKey) {
+      loadAuditEvents();
+    }
+  }, [config.adminKey, loadAuditEvents]);
+
+  // Virtual keys (the real "operators" backing the Overview budget panel --
+  // same /v1/admin/keys source as the Users tab, see UsersTab.tsx)
+  const [keys, setKeys] = useState<VirtualKeyRecord[]>([]);
+  const [keysLoading, setKeysLoading] = useState(false);
+
+  const loadKeys = useCallback(async () => {
+    setKeysLoading(true);
+    try {
+      const res = await adminFetch('keys');
+      if (res.ok) {
+        const data = await res.json();
+        setKeys(data.keys || []);
+      }
+    } catch {
+      // Overview budget panel just falls back to its empty state
+    } finally {
+      setKeysLoading(false);
+    }
+  }, [adminFetch]);
+
+  useEffect(() => {
+    if (config.adminKey) {
+      loadKeys();
+    }
+  }, [config.adminKey, loadKeys]);
 
   // Settings states (cosmetic local prefs; real gateway connection lives in GatewayContext)
   const [rateLimit, setRateLimit] = useState('60');
@@ -319,14 +208,15 @@ export default function AdminDashboard({
   });
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
 
-  // Derived budget threshold alerts based on current state and settings
-  const thresholdAlerts = users.map(u => {
-    const pct = (u.costLimit || 0) > 0 ? ((u.totalCost || 0) / (u.costLimit || 0)) * 100 : 0;
-    const isExceeded = (u.costLimit || 0) > 0 && pct >= alertThresholdPct;
+  // Derived budget threshold alerts based on real virtual-key spend vs. their monthly budget
+  const thresholdAlerts = keys.map(k => {
+    const monthly = k.budget_usd_monthly || 0;
+    const pct = monthly > 0 ? (k.budget_usd_spent / monthly) * 100 : 0;
+    const isExceeded = monthly > 0 && pct >= alertThresholdPct;
     if (isExceeded) {
       return {
-        userId: u.id,
-        user: u,
+        keyId: k.key_id,
+        key: k,
         percentage: pct,
         isBreach: pct >= 100
       };
@@ -334,7 +224,7 @@ export default function AdminDashboard({
     return null;
   }).filter((x): x is NonNullable<typeof x> => x !== null);
 
-  const activeAlertsCount = thresholdAlerts.filter(a => !dismissedAlertIds.includes(a.userId)).length;
+  const activeAlertsCount = thresholdAlerts.filter(a => !dismissedAlertIds.includes(a.keyId)).length;
 
   // Trigger Toast helper
   const showToast = (msg: string) => {
@@ -372,83 +262,9 @@ export default function AdminDashboard({
     showToast(`Role "${role}" permission set for "${capability}"`);
   };
 
-  const toggleUserStatus = (userId: string) => {
-    setUsers(prev => prev.map(u => {
-      if (u.id === userId) {
-        const nextStatus = u.status === 'active' ? 'disabled' : 'active';
-        showToast(`User status for ${u.email} set to ${nextStatus.toUpperCase()}`);
-        return { ...u, status: nextStatus };
-      }
-      return u;
-    }));
-  };
-
-  const updateUserCostLimit = (userId: string, limit: number) => {
-    setUsers(prev => prev.map(u => {
-      if (u.id === userId) {
-        showToast(`Cost limit updated for ${u.name} to $${limit.toFixed(2)}`);
-        return { ...u, costLimit: limit };
-      }
-      return u;
-    }));
-  };
-
-  const resetUserCost = (userId: string) => {
-    setUsers(prev => prev.map(u => {
-      if (u.id === userId) {
-        showToast(`Cumulative cost accumulator reset for ${u.name}`);
-        setDismissedAlertIds(prevD => prevD.filter(id => id !== userId));
-        return { ...u, totalCost: 0, inputTokens: 0, outputTokens: 0 };
-      }
-      return u;
-    }));
-  };
-
-  const simulateTrafficForUser = (userId: string) => {
-    const additionalInput = Math.floor(Math.random() * 95000) + 15000;
-    const additionalOutput = Math.floor(Math.random() * 45000) + 5000;
-    const additionalCost = parseFloat(((additionalInput * 0.00001) + (additionalOutput * 0.000025)).toFixed(2));
-
-    setUsers(prev => prev.map(u => {
-      if (u.id === userId) {
-        const nextInput = (u.inputTokens || 0) + additionalInput;
-        const nextOutput = (u.outputTokens || 0) + additionalOutput;
-        const nextCost = parseFloat(((u.totalCost || 0) + additionalCost).toFixed(2));
-        
-        const prevPct = (u.costLimit || 0) > 0 ? ((u.totalCost || 0) / (u.costLimit || 0)) * 100 : 0;
-        const nextPct = (u.costLimit || 0) > 0 ? (nextCost / (u.costLimit || 0)) * 100 : 0;
-
-        if (prevPct < 100 && nextPct >= 100) {
-          setDismissedAlertIds(prevD => prevD.filter(id => id !== userId));
-        }
-
-        if (u.costLimit > 0) {
-          if (prevPct < alertThresholdPct && nextPct >= alertThresholdPct && nextPct < 100) {
-            showToast(`⚠️ WARNING threshold crossed for ${u.name}! Used ${nextPct.toFixed(1)}% of budget.`);
-          } else if (prevPct < 100 && nextPct >= 100) {
-            showToast(`🚨 CRITICAL BUDGET BREACH: ${u.name} has exceeded 100% of cost limit ($${nextCost.toFixed(2)} / $${u.costLimit.toFixed(2)})!`);
-          } else {
-            showToast(`Traffic simulated for ${u.name}: +$${additionalCost.toFixed(2)} (${(additionalInput + additionalOutput).toLocaleString()} tokens)`);
-          }
-        } else {
-          showToast(`Traffic simulated for ${u.name}: +$${additionalCost.toFixed(2)}`);
-        }
-
-        return {
-          ...u,
-          inputTokens: nextInput,
-          outputTokens: nextOutput,
-          totalCost: nextCost,
-          lastActive: new Date().toISOString().replace('T', ' ').substring(0, 19)
-        };
-      }
-      return u;
-    }));
-  };
-
-  const dismissAlert = (userId: string) => {
-    setDismissedAlertIds(prev => [...prev, userId]);
-    showToast(`Alert for user dismissed in this session`);
+  const dismissAlert = (keyId: string) => {
+    setDismissedAlertIds(prev => [...prev, keyId]);
+    showToast(`Alert for key dismissed in this session`);
   };
 
   const resetAlerts = () => {
@@ -458,44 +274,33 @@ export default function AdminDashboard({
 
   const handleExportCSV = () => {
     const headers = [
-      'User ID',
-      'Name',
-      'Email',
-      'Role',
+      'Key ID',
+      'User / Team',
+      'Policy',
       'Status',
-      'Input Tokens',
-      'Output Tokens',
-      'Total Tokens',
-      'Total Cost (USD)',
-      'Cost Limit (USD)',
+      'Spent (USD)',
+      'Monthly Limit (USD)',
       'Quota Used (%)',
       'Limit Breach Status',
-      'Last Active'
+      'Created At'
     ];
 
-    const rows = users.map(u => {
-      const totalTokens = (u.inputTokens || 0) + (u.outputTokens || 0);
-      const quotaPct = (u.costLimit || 0) > 0 ? ((u.totalCost || 0) / (u.costLimit || 0)) * 100 : 0;
-      const isBreached = (u.costLimit || 0) > 0 && (u.totalCost || 0) >= (u.costLimit || 0) ? 'BREACHED' : 'OK';
-      
-      const escapedName = u.name ? u.name.replace(/"/g, '""') : '';
-      const escapedEmail = u.email ? u.email.replace(/"/g, '""') : '';
-      const escapedRole = u.role ? u.role.replace(/"/g, '""') : '';
+    const rows = keys.map(k => {
+      const monthly = k.budget_usd_monthly || 0;
+      const quotaPct = monthly > 0 ? (k.budget_usd_spent / monthly) * 100 : 0;
+      const isBreached = monthly > 0 && k.budget_usd_spent >= monthly ? 'BREACHED' : 'OK';
+      const escapedTeam = k.team_id ? k.team_id.replace(/"/g, '""') : '';
 
       return [
-        u.id,
-        `"${escapedName}"`,
-        `"${escapedEmail}"`,
-        `"${escapedRole}"`,
-        u.status,
-        u.inputTokens || 0,
-        u.outputTokens || 0,
-        totalTokens,
-        (u.totalCost || 0).toFixed(2),
-        (u.costLimit || 0).toFixed(2),
+        k.key_id,
+        `"${escapedTeam}"`,
+        k.policy_id,
+        k.active ? 'active' : 'revoked',
+        k.budget_usd_spent.toFixed(2),
+        monthly.toFixed(2),
         `${quotaPct.toFixed(1)}%`,
         isBreached,
-        u.lastActive
+        new Date(k.created_at * 1000).toISOString()
       ];
     });
 
@@ -513,7 +318,7 @@ export default function AdminDashboard({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    
+
     showToast('Spend telemetry and token cost report exported successfully as CSV');
   };
 
@@ -785,23 +590,49 @@ export default function AdminDashboard({
 
         {/* WORKSPACE PAGE CONTAINER */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          
+
+          {/* First-run gate: nothing below (Overview/Users/Audit/Providers)
+              can load real data without an admin key -- loadKeys/loadAuditEvents
+              simply don't fire while config.adminKey is empty (see the two
+              useEffects above), so those tabs would otherwise render an
+              indistinguishable "no data yet" empty state. Surface the real
+              reason instead of leaving it to look broken. */}
+          {!config.adminKey && activeTab !== 'settings' && (
+            <div className="bg-amber-500/[0.04] border border-amber-500/20 p-4 rounded-[2px] flex items-center justify-between gap-4">
+              <div className="flex items-center space-x-3">
+                <div className="p-1.5 bg-amber-500/10 rounded-[1px]">
+                  <ShieldCheck size={14} className="text-amber-400" />
+                </div>
+                <div>
+                  <div className="text-xs font-semibold text-white/90">No admin key configured for this session</div>
+                  <div className="text-[10px] font-mono text-white/40 mt-0.5">
+                    Users, budgets, and audit logs can't load until an admin key is set. Paste your gateway's admin key in Settings once -- it's remembered for this account afterward.
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setActiveTab('settings')}
+                className="shrink-0 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/25 text-amber-300 rounded-[1px] text-[10px] font-mono font-bold uppercase tracking-wider transition-all cursor-pointer"
+              >
+                Go to Settings
+              </button>
+            </div>
+          )}
+
           {/* Overview Tab render */}
           {activeTab === 'overview' && (
             <OverviewTab
               stats={stats}
-              users={users}
+              keys={keys}
+              keysLoading={keysLoading}
               alertThresholdPct={alertThresholdPct}
               setAlertThresholdPct={setAlertThresholdPct}
               dismissedAlertIds={dismissedAlertIds}
               thresholdAlerts={thresholdAlerts}
               activeAlertsCount={activeAlertsCount}
               resetAlerts={resetAlerts}
-              simulateTrafficForUser={simulateTrafficForUser}
               dismissAlert={dismissAlert}
-              resetUserCost={resetUserCost}
               handleExportCSV={handleExportCSV}
-              updateUserCostLimit={updateUserCostLimit}
               showToast={showToast}
             />
           )}
@@ -816,6 +647,9 @@ export default function AdminDashboard({
               expandedEventId={expandedEventId}
               setExpandedEventId={setExpandedEventId}
               showToast={showToast}
+              auditLoading={auditLoading}
+              auditLoadError={auditLoadError}
+              onRefresh={loadAuditEvents}
             />
           )}
 
@@ -824,7 +658,6 @@ export default function AdminDashboard({
             <RbacTab
               rbacMatrix={rbacMatrix}
               toggleRbacPermission={toggleRbacPermission}
-              users={users}
               modelsAndCapabilities={MODELS_AND_CAPABILITIES}
               showToast={showToast}
             />
