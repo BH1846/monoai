@@ -127,7 +127,14 @@ async def test_block_values_never_appear_in_any_output_field_input_side(tmp_path
 async def test_block_values_never_appear_in_any_output_field_output_side(tmp_path, value):
     orch, audit_path = _build_orchestrator(tmp_path, _LeakingProvider(value))
 
-    result = await orch.chat({"messages": [{"role": "user", "content": "tell me something"}]})
+    # Uses finance_strict (output_scan.enabled: true) rather than the default
+    # policy, which intentionally has output scanning turned off -- this test
+    # asserts the output-scan mechanism still catches model-leaked BLOCK
+    # values when a policy opts into it.
+    result = await orch.chat(
+        {"messages": [{"role": "user", "content": "tell me something"}]},
+        policy_id="finance_strict",
+    )
 
     assert value not in result.content
     with open(audit_path) as f:

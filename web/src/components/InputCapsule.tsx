@@ -169,32 +169,21 @@ export default function InputCapsule({
         ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` 
         : `${(file.size / 1024).toFixed(0)} KB`;
 
-      if (file.type.startsWith('image/')) {
-        reader.onloadend = () => {
-          setAttachments(prev => [...prev, {
-            id,
-            name: file.name,
-            size: sizeFormatted,
-            type: file.type,
-            base64: reader.result as string,
-            url: URL.createObjectURL(file)
-          }]);
-        };
-        reader.readAsDataURL(file);
-      } else {
-        // Assume text / document file
-        reader.onloadend = () => {
-          setAttachments(prev => [...prev, {
-            id,
-            name: file.name,
-            size: sizeFormatted,
-            type: file.type,
-            text: reader.result as string,
-            url: URL.createObjectURL(file)
-          }]);
-        };
-        reader.readAsText(file);
-      }
+      // Read every file as a base64 data URL. Binary docs (PDF/DOCX/XLSX) and
+      // images alike can then be sent to the gateway's /files/scan endpoint,
+      // which extracts + OCRs the text server-side. (readAsText would corrupt
+      // binary formats.)
+      reader.onloadend = () => {
+        setAttachments(prev => [...prev, {
+          id,
+          name: file.name,
+          size: sizeFormatted,
+          type: file.type,
+          base64: reader.result as string,
+          url: URL.createObjectURL(file)
+        }]);
+      };
+      reader.readAsDataURL(file);
     });
   };
 
@@ -318,7 +307,7 @@ export default function InputCapsule({
                 onChange={handleFileChange}
                 multiple
                 className="hidden"
-                accept="image/*,application/pdf,text/*,application/zip,.zip"
+                accept=".txt,.text,.md,.log,.csv,.pdf,.docx,.xlsx,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff,text/plain,text/*,image/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               />
             </div>
 
@@ -422,7 +411,7 @@ export default function InputCapsule({
 
         {/* Small warning disclaimer */}
         <p className="text-center text-[9px] font-mono text-white/20 mt-2 tracking-wide uppercase">
-          MonoAI can make mistakes. Verify critical system schemas.
+          Torkq can make mistakes. Verify critical system schemas.
         </p>
 
       </div>

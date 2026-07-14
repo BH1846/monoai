@@ -29,6 +29,14 @@ _PHONE_INTL_RE = re.compile(
 
 _SSN_RE = re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)")
 
+# US-format SSN written with spaces instead of dashes (e.g. "091 92 3991"),
+# and the common generic 9-digit-in-three-groups shape many other national
+# ID numbers use (e.g. "091 923 991") -- neither was covered by the dashed/
+# dotted/plain-9-digit patterns above, so a space- or dash-separated ID with
+# either grouping silently passed every detector.
+_SSN_SPACED_RE = re.compile(r"(?<!\d)\d{3}[ ]\d{2}[ ]\d{4}(?!\d)")
+_GOV_ID_GROUPED3_RE = re.compile(r"(?<!\d)\d{3}[ \-]\d{3}[ \-]\d{3}(?!\d)")
+
 _GOV_ID_DOTTED_RE = re.compile(r"(?<!\d)\d{2,3}\.\d{2}\.\d{4}(?!\d)")
 
 _GOV_ID_PLAIN_RE = re.compile(r"(?<!\d)\d{9}(?!\d)")
@@ -148,6 +156,24 @@ class RegexDetector:
                 start=m.start(), end=m.end(), text=m.group(0),
                 label=SpanLabel.GOV_ID, source=SpanSource.REGEX,
                 confidence=0.9, meta={"format": "ssn-dashed"},
+            ))
+            taken.add((m.start(), m.end()))
+        for m in _SSN_SPACED_RE.finditer(text):
+            if any(a <= m.start() < b or a < m.end() <= b for a, b in taken):
+                continue
+            spans.append(RawSpan(
+                start=m.start(), end=m.end(), text=m.group(0),
+                label=SpanLabel.GOV_ID, source=SpanSource.REGEX,
+                confidence=0.9, meta={"format": "ssn-spaced"},
+            ))
+            taken.add((m.start(), m.end()))
+        for m in _GOV_ID_GROUPED3_RE.finditer(text):
+            if any(a <= m.start() < b or a < m.end() <= b for a, b in taken):
+                continue
+            spans.append(RawSpan(
+                start=m.start(), end=m.end(), text=m.group(0),
+                label=SpanLabel.GOV_ID, source=SpanSource.REGEX,
+                confidence=0.85, meta={"format": "gov-id-grouped3"},
             ))
             taken.add((m.start(), m.end()))
         for m in _GOV_ID_DOTTED_RE.finditer(text):

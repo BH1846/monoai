@@ -56,7 +56,12 @@ async def test_trace_spans_cover_all_stages(tmp_path):
     configure_tracing(exporter)
     orch = _build_orchestrator(tmp_path)
 
-    await orch.chat({"messages": [{"role": "user", "content": "email me at a@b.com"}]})
+    # finance_strict keeps output_scan enabled (the default policy now has it
+    # off), so the output_scan span is emitted for this coverage assertion.
+    await orch.chat(
+        {"messages": [{"role": "user", "content": "email me at a@b.com"}]},
+        policy_id="finance_strict",
+    )
 
     span_names = {s.name for s in exporter.get_finished_spans()}
     assert {"sanitize", "route", "provider", "output_scan", "rehydrate", "audit"} <= span_names

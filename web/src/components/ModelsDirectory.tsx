@@ -202,7 +202,7 @@ export default function ModelsDirectory({
           logs.push('[2.5ms] DLP Entropy Scanner triggered: Secret detection match');
           logs.push('[2.8ms] Rule ID: dlp-block-high-entropy matched: "AWS_ACCESS_KEY_ID"');
           logs.push('[3.1ms] Gateway state: REQUEST_TERMINATED_PRE_FLIGHT');
-          explanation = `The MonoAI policy shield automatically intercepted the payload because it contains patterns matching enterprise credentials or high-entropy secrets. Connection to ${selectedModelDetail.provider} was short-circuited to prevent credentials leakage.`;
+          explanation = `The Torkq policy shield automatically intercepted the payload because it contains patterns matching enterprise credentials or high-entropy secrets. Connection to ${selectedModelDetail.provider} was short-circuited to prevent credentials leakage.`;
         } else if (text.includes('ssn') || text.includes('phone') || text.includes('social security') || text.includes('email')) {
           status = 'REDACTED';
           logs.push('[3.1ms] PII Classifier triggered: SSN/Email detected');
@@ -490,7 +490,7 @@ export default function ModelsDirectory({
                   <span className="text-[8px] font-mono text-white/20">TEST RUNNER</span>
                 </div>
                 <p className="text-[10px] text-white/30 font-sans leading-relaxed">
-                  Validate how MonoAI acts as a reverse proxy for {selectedModelDetail.name} under security scenarios.
+                  Validate how Torkq acts as a reverse proxy for {selectedModelDetail.name} under security scenarios.
                 </p>
                 <div className="space-y-1.5">
                   <textarea

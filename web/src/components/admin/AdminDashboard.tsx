@@ -6,7 +6,6 @@ import {
   Users,
   Server,
   Settings as SettingsIcon,
-  ArrowLeft,
   LogOut,
   Activity,
   Check
@@ -403,11 +402,11 @@ export default function AdminDashboard({
         <div className="h-16 px-5 border-b border-white/[0.08] flex items-center justify-between shrink-0">
           <div className="flex items-center space-x-2">
             <div className="w-5 h-5 bg-rose-500/10 border border-rose-500/30 rounded-[2px] flex items-center justify-center font-mono text-[10px] text-rose-400 font-bold">
-              M
+              T
             </div>
             <div>
               <span className="font-sans text-[13px] tracking-widest text-white/90 font-bold uppercase">
-                MonoAI
+                Torkq
               </span>
               <span className="block text-[8px] font-mono tracking-wider text-rose-400 font-bold leading-none">
                 CONTROL PLANE
@@ -532,16 +531,6 @@ export default function AdminDashboard({
           </button>
         </div>
 
-        {/* Return Button */}
-        <div className="p-3 border-t border-white/[0.08] bg-[#05080d]/80 space-y-2">
-          <button
-            onClick={onBackToWorkspace}
-            className="w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-[2px] border border-rose-500/20 bg-rose-500/5 hover:bg-rose-500/10 text-rose-300 text-[11px] font-mono tracking-tight transition-colors cursor-pointer"
-          >
-            <ArrowLeft size={12} />
-            <span>RETURN TO CHATS</span>
-          </button>
-        </div>
       </div>
 
       {/* RIGHT MAIN WORKSPACE */}
@@ -551,7 +540,7 @@ export default function AdminDashboard({
         <div className="h-16 px-6 border-b border-white/[0.08] flex items-center justify-between bg-[#070b11]/50">
           <div className="flex items-center space-x-3">
             <span className="text-[11px] font-mono bg-white/[0.03] border border-white/[0.08] px-2 py-0.5 text-white/50 rounded-[1px]">
-              ORG: MONOAI_GLOBAL
+              ORG: TORKQ_GLOBAL
             </span>
             <span className="text-white/20">/</span>
             <span className="text-xs text-white/70 font-mono">

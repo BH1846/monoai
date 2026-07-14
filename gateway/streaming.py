@@ -125,10 +125,15 @@ class StreamRehydrator:
         # for why NER is unreliable (and can corrupt legitimate output)
         # at this granularity. Regex/secrets detectors stay on.
         with stage_span("streaming_rehydrate", session_id=self._session_id, flush_region_len=len(flush_region)):
-            scanned, new_tokens = self._pii.scan_output(
-                flush_region, self._session_id, self._policy, include_ner=False
-            )
-            self._output_token_ids |= new_tokens
+            if self._policy.output_scan.enabled:
+                scanned, new_tokens = self._pii.scan_output(
+                    flush_region, self._session_id, self._policy, include_ner=False
+                )
+                self._output_token_ids |= new_tokens
+            else:
+                # Output scanning disabled: pass the model's output through
+                # untouched; only input-side tokens get rehydrated below.
+                scanned = flush_region
             final_text, unresolved, review_required = self._pii.rehydrate(
                 scanned, self._session_id, self._input_token_ids, self._output_token_ids
             )

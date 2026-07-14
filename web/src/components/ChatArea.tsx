@@ -148,11 +148,18 @@ export default function ChatArea({
     return sizeStr;
   };
 
-  const handleDownloadMock = (att: Attachment) => {
-    // Standard mock download feedback
+  const handleDownloadAttachment = (att: Attachment) => {
     const element = document.createElement("a");
-    const file = new Blob([att.text || "Mock content payload of downloaded asset"], { type: att.type });
-    element.href = URL.createObjectURL(file);
+    if (att.text) {
+      const file = new Blob([att.text], { type: att.type });
+      element.href = URL.createObjectURL(file);
+    } else if (att.base64) {
+      element.href = att.base64.startsWith('data:') ? att.base64 : `data:${att.type};base64,${att.base64}`;
+    } else if (att.url) {
+      element.href = att.url;
+    } else {
+      return; // nothing real to download for this attachment
+    }
     element.download = att.name;
     document.body.appendChild(element);
     element.click();
@@ -267,7 +274,7 @@ export default function ChatArea({
               </div>
               <div className="space-y-2.5">
                 <h2 className="text-xl font-mono tracking-widest text-white/95 font-semibold uppercase">
-                  MonoAI Policy Gateway
+                  Torkq Policy Gateway
                 </h2>
                 <p className="text-xs text-white/45 max-w-lg mx-auto leading-relaxed font-light font-sans">
                   Every request passes through your gateway's policies before it reaches a model. Test real-time RBAC compliance, PII redaction, secret scanning, and vulnerability detection below.
@@ -369,12 +376,58 @@ export default function ChatArea({
                                 </div>
                                 
                                 <button
-                                  onClick={() => handleDownloadMock(att)}
+                                  onClick={() => handleDownloadAttachment(att)}
                                   className="text-[11px] font-bold text-white/50 hover:text-white transition-all pr-2"
                                   title="View attachment file"
                                 >
                                   View
                                 </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* File PII scan summary (for attached files) */}
+                      {isUser && msg.fileScans && msg.fileScans.length > 0 && (
+                        <div className="w-full max-w-2xl mt-1.5 space-y-1.5">
+                          {msg.fileScans.map((fs, i) => {
+                            const labelEntries = Object.entries(fs.labels || {});
+                            const total = labelEntries.reduce((n, [, c]) => n + c, 0);
+                            return (
+                              <div
+                                key={i}
+                                className={`flex flex-wrap items-center gap-2 text-[11px] font-mono px-3 py-1.5 rounded-[3px] border ${
+                                  fs.error ? 'bg-white/[0.02] border-white/10 text-white/50'
+                                  : fs.blocked ? 'bg-rose-500/5 border-rose-500/20 text-rose-300'
+                                  : total > 0 ? 'bg-amber-500/5 border-amber-500/20 text-amber-300'
+                                  : 'bg-emerald-500/5 border-emerald-500/20 text-emerald-300'
+                                }`}
+                              >
+                                <Shield size={11} className="shrink-0" />
+                                <span className="text-white/70 truncate max-w-[200px]">{fs.name}</span>
+                                {fs.error ? (
+                                  <span>could not scan: {fs.error}</span>
+                                ) : fs.blocked && fs.blockedLabels.length > 0 ? (
+                                  <>
+                                    <span>BLOCKED — contains:</span>
+                                    {fs.blockedLabels.map((label) => (
+                                      <span key={label} className="px-1 py-0.2 bg-rose-500/15 border border-rose-500/25 rounded-[1px]">{label}</span>
+                                    ))}
+                                    {labelEntries.length > 0 && (
+                                      <span className="text-white/40">(+{labelEntries.map(([l, c]) => `${l}×${c}`).join(', ')} redacted)</span>
+                                    )}
+                                  </>
+                                ) : total === 0 ? (
+                                  <span>no PII detected — sent as-is</span>
+                                ) : (
+                                  <>
+                                    <span>{total} PII item{total !== 1 ? 's' : ''} redacted before sending:</span>
+                                    {labelEntries.map(([label, count]) => (
+                                      <span key={label} className="px-1 py-0.2 bg-white/10 rounded-[1px]">{label}×{count}</span>
+                                    ))}
+                                  </>
+                                )}
                               </div>
                             );
                           })}
@@ -434,7 +487,7 @@ export default function ChatArea({
                       M
                     </div>
                     <span className="text-[12px] font-semibold text-white/80 tracking-wide">
-                      MonoAI
+                      Torkq
                     </span>
                     <span className="text-[10px] text-white/30 flex items-center space-x-1 font-mono">
                       <RefreshCw size={10} className="animate-spin mr-1 text-white/40" />

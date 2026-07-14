@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { 
-  Plus, 
-  MessageSquare, 
-  FolderKanban, 
-  Sparkles, 
+  Plus,
+  MessageSquare,
+  FolderKanban,
+  Sparkles,
   Settings, 
   Terminal, 
   Code, 
@@ -31,8 +31,9 @@ interface SidebarProps {
   userEmail?: string;
   onSignOut?: () => void;
   userRole?: 'admin' | 'user';
-  activeTab?: 'chats' | 'models' | 'admin';
-  onChangeTab?: (tab: 'chats' | 'models' | 'admin') => void;
+  activeTab?: 'chats' | 'models' | 'projects' | 'admin';
+  onChangeTab?: (tab: 'chats' | 'models' | 'projects' | 'admin') => void;
+  projectCount?: number;
 }
 
 export default function Sidebar({
@@ -43,11 +44,12 @@ export default function Sidebar({
   onNewChat,
   onDeleteSession,
   setIsCollapsed,
-  userEmail = "rahulbalaskandan1511@gmail.com",
+  userEmail = "",
   onSignOut,
   userRole = 'user',
   activeTab = 'chats',
-  onChangeTab
+  onChangeTab,
+  projectCount = 0
 }: SidebarProps) {
   const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -57,9 +59,9 @@ export default function Sidebar({
     .replace(/\b\w/g, l => l.toUpperCase());
 
   const mainNavItems = [
-    { id: 'chats' as const, label: 'Chats', icon: MessageSquare, active: activeTab === 'chats' },
-    { id: 'models' as const, label: 'Models Directory', icon: Cpu, active: activeTab === 'models' },
-    { id: 'projects' as const, label: 'Projects', icon: FolderKanban, count: '3', active: false },
+    { id: 'chats' as const, label: 'Chats', icon: MessageSquare, active: activeTab === 'chats', count: undefined as string | undefined },
+    { id: 'models' as const, label: 'Models Directory', icon: Cpu, active: activeTab === 'models', count: undefined as string | undefined },
+    { id: 'projects' as const, label: 'Projects', icon: FolderKanban, active: activeTab === 'projects', count: projectCount > 0 ? String(projectCount) : undefined },
   ];
 
   return (
@@ -73,10 +75,10 @@ export default function Sidebar({
       <div className="h-16 px-5 border-b border-white/[0.08] flex items-center justify-between shrink-0 bg-[#090E15]/40">
         <div className="flex items-center space-x-2.5">
           <div className="w-5 h-5 bg-rose-500/10 border border-rose-500/30 rounded-[2px] flex items-center justify-center font-mono text-[10px] text-rose-400 font-bold">
-            M
+            T
           </div>
           <span className="font-sans text-[13px] tracking-widest text-white/90 font-bold uppercase">
-            MonoAI Gateway
+            Torkq
           </span>
         </div>
         <button 
@@ -110,14 +112,10 @@ export default function Sidebar({
             return (
               <button
                 key={item.id}
-                onClick={() => {
-                  if (item.id === 'chats' || item.id === 'models') {
-                    onChangeTab?.(item.id);
-                  }
-                }}
+                onClick={() => onChangeTab?.(item.id)}
                 className={`flex items-center justify-between w-full px-3 py-2 rounded-[2px] text-[12px] font-medium transition-all cursor-pointer ${
-                  item.active 
-                    ? 'text-white bg-white/[0.05] font-semibold border border-white/[0.04]' 
+                  item.active
+                    ? 'text-white bg-white/[0.05] font-semibold border border-white/[0.04]'
                     : 'text-white/60 hover:text-white hover:bg-white/[0.02] border border-transparent'
                 }`}
               >

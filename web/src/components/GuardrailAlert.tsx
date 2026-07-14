@@ -83,7 +83,7 @@ export default function GuardrailAlert({ decision }: GuardrailAlertProps) {
           </span>
         </div>
         <span className="text-[8px] font-mono uppercase bg-white/5 border border-white/10 px-1.5 py-0.5 rounded-[1px] text-white/50 tracking-wider">
-          MonoAI Engine v1.4
+          Torkq Engine v1.4
         </span>
       </div>
 

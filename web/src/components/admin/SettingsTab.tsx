@@ -91,7 +91,7 @@ export default function SettingsTab({
           <span className="text-xs font-mono font-bold uppercase text-white/90">Gateway Connection</span>
         </div>
         <p className="text-[11px] text-white/40 leading-relaxed max-w-2xl">
-          Paste your MonoAI gateway's admin key here to authenticate this console. It is sent only to this
+          Paste your Torkq gateway's admin key here to authenticate this console. It is sent only to this
           app's own server (never to your browser's network tab in plaintext beyond this origin). This browser
           tab keeps it in <strong className="text-white/60">sessionStorage</strong> (cleared on tab close), and
           saving it also remembers it on the gateway itself against{' '}

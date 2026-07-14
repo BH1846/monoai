@@ -2,56 +2,31 @@ import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import ChatArea from './components/ChatArea';
 import InputCapsule from './components/InputCapsule';
-import { ChatSession, Message, Attachment, ModelType, Artifact } from './types';
+import { ChatSession, Message, Attachment, ModelType, Artifact, Project, FileScanSummary } from './types';
 import ArtifactPanel from './components/ArtifactPanel';
 import SignIn from './components/SignIn';
 import ModelsDirectory from './components/ModelsDirectory';
+import ProjectsPanel from './components/ProjectsPanel';
 import AdminDashboard from './components/admin/AdminDashboard';
 import { useGateway } from './context/GatewayContext';
 
-// Pre-populated high-fidelity sessions to ensure professional density on first load
-const INITIAL_MOCK_SESSIONS: ChatSession[] = [
-  {
-    id: 'session-1',
-    title: 'Express + Vite Architecture',
-    model: 'auto',
-    timestamp: '2 hours ago',
-    messages: [
-      {
-        id: 'msg-1',
-        role: 'user',
-        content: 'What is the optimal folder structure for a full-stack Express + React application utilizing Vite? Keep it production-ready and modular.',
-        timestamp: '10:14 AM'
-      },
-      {
-        id: 'msg-2',
-        role: 'assistant',
-        content: 'An elegant, production-ready directory structure for an Express + Vite React application isolates server logic from frontend concerns while remaining compact and easy to bundle.\n\nHere is the recommended architecture:\n\n```text\n├── dist/                    # Production bundle outputs (compiled assets & server)\n│   ├── index.html           # Production static client bundle entry\n│   └── server.cjs           # Self-contained bundled Express backend\n├── src/                     # Client-side React applications\n│   ├── components/          # Reusable shared layout components\n│   ├── App.tsx              # Main coordinate UI layout\n│   ├── main.tsx             # Vite frontend bootstrap entry\n│   └── index.css            # Unified Tailwind global styling imports\n├── server.ts                # TypeScript Express server (dev & API route proxy)\n├── package.json             # Single scripts manager & dependencies block\n└── vite.config.ts           # Development dev server and asset configuration\n```\n\n### Key Design Guidelines\n1. **Unified package.json**: Avoid nested directory configuration. Keep dependencies, build scripts, and dev scripts unified in the workspace root for cleaner container routing.\n2. **Vite Development Middleware**: During local runs, configure the Express app to leverage `createViteServer` in middleware mode to enjoy instant bundle compilation on port `3000`.',
-        timestamp: '10:15 AM'
-      }
-    ]
-  },
-  {
-    id: 'session-2',
-    title: 'CSS Variable Theme Specs',
-    model: 'auto',
-    timestamp: '1 day ago',
-    messages: [
-      {
-        id: 'msg-3',
-        role: 'user',
-        content: 'Provide a clean, modern color spectrum for a charcoal/matte monochrome editor interface.',
-        timestamp: 'Yesterday'
-      },
-      {
-        id: 'msg-4',
-        role: 'assistant',
-        content: 'To achieve a warm charcoal matte feel, avoid true pitch blacks (`#000000`) and instead choose deeply saturated, dark neutral hues. This reduces eye fatigue and produces a distinctive premium brand texture.\n\nHere are the hex coordinates:\n\n*   **Primary Background:** `#191919` (matte coal canvas)\n*   **Sidebar Background:** `#1b1b19` (slightly warmer charcoal)\n*   **Integrated Containers:** `#242422` (mid-gray matte anchor)\n*   **Low-Contrast Borders:** `rgba(255, 255, 255, 0.08)` (ultra-thin borders)\n*   **Active Accents:** `rgba(255, 255, 255, 0.9)` (soft off-whites instead of harsh blues)',
-        timestamp: 'Yesterday'
-      }
-    ]
-  }
-];
+const PROJECT_COLORS = ['#c2703f', '#4f7cc2', '#5fae7a', '#a664c2', '#c25f8f', '#c2a83f'];
+
+type AppTab = 'chats' | 'models' | 'projects' | 'admin';
+
+// The active tab is driven by the URL path so a reload keeps you where you
+// were and the browser back/forward buttons work. (SPA fallback serves
+// index.html on every path -- see web/server.ts.)
+function tabFromPath(): AppTab {
+  const p = typeof window !== 'undefined' ? window.location.pathname : '/';
+  if (p.startsWith('/admin')) return 'admin';
+  if (p.startsWith('/projects')) return 'projects';
+  if (p.startsWith('/models')) return 'models';
+  return 'chats';
+}
+function pathForTab(tab: AppTab): string {
+  return tab === 'chats' ? '/' : `/${tab}`;
+}
 
 export default function App() {
   const { chatHeaders, setAdminEmail, setAdminKey, loadAdminKeyForEmail } = useGateway();
@@ -59,7 +34,7 @@ export default function App() {
     return sessionStorage.getItem('mono_authenticated') === 'true';
   });
   const [userEmail, setUserEmail] = useState<string>(() => {
-    return sessionStorage.getItem('mono_user_email') || 'rahulbalaskandan1511@gmail.com';
+    return sessionStorage.getItem('mono_user_email') || '';
   });
   const [userRole, setUserRole] = useState<'admin' | 'user'>(() => {
     return (sessionStorage.getItem('mono_user_role') as 'admin' | 'user') || 'user';
@@ -72,7 +47,79 @@ export default function App() {
   const [suggestionText, setSuggestionText] = useState('');
   const [activeArtifact, setActiveArtifact] = useState<Artifact | null>(null);
   const [isArtifactOpen, setIsArtifactOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'chats' | 'models' | 'admin'>('chats');
+  const [activeTab, setActiveTab] = useState<AppTab>(() => {
+    // Prefer a persisted tab (survives reload even if the URL was lost), then
+    // the URL path, then default to chats.
+    const saved = sessionStorage.getItem('mono_active_tab') as AppTab | null;
+    if (saved && ['chats', 'models', 'projects', 'admin'].includes(saved)) return saved;
+    return tabFromPath();
+  });
+  const [projects, setProjects] = useState<Project[]>(() => {
+    try {
+      const saved = localStorage.getItem('mono_projects');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+
+  // Keep the URL in sync with the active tab (so reload restores it), and
+  // update the tab when the user hits browser back/forward.
+  useEffect(() => {
+    sessionStorage.setItem('mono_active_tab', activeTab);
+    const path = pathForTab(activeTab);
+    if (window.location.pathname !== path) {
+      window.history.pushState({ tab: activeTab }, '', path);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    const onPop = () => setActiveTab(tabFromPath());
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  const saveProjects = (updated: Project[]) => {
+    setProjects(updated);
+    localStorage.setItem('mono_projects', JSON.stringify(updated));
+  };
+
+  const handleCreateProject = (name: string, description: string): string => {
+    const id = `project-${Date.now()}`;
+    const now = Date.now();
+    const project: Project = {
+      id, name, description, instructions: '',
+      color: PROJECT_COLORS[projects.length % PROJECT_COLORS.length],
+      createdAt: now, updatedAt: now,
+    };
+    saveProjects([project, ...projects]);
+    return id;
+  };
+
+  const handleUpdateProject = (id: string, patch: Partial<Project>) => {
+    saveProjects(projects.map(p => p.id === id ? { ...p, ...patch, updatedAt: Date.now() } : p));
+  };
+
+  const handleDeleteProject = (id: string) => {
+    saveProjects(projects.filter(p => p.id !== id));
+    // Detach (don't delete) chats that belonged to it.
+    saveSessions(sessions.map(s => s.projectId === id ? { ...s, projectId: undefined } : s));
+    setSelectedProjectId(null);
+  };
+
+  const handleNewChatInProject = (projectId: string) => {
+    const newSession: ChatSession = {
+      id: `session-${Date.now()}`,
+      title: 'New chat',
+      model: selectedModel,
+      timestamp: 'Just now',
+      messages: [],
+      projectId,
+    };
+    saveSessions([newSession, ...sessions]);
+    setActiveSessionId(newSession.id);
+    handleUpdateProject(projectId, {});
+    setActiveTab('chats');
+  };
 
   const handleOpenArtifact = (title: string, language: string, code: string, type: 'code' | 'preview' | 'document') => {
     setActiveArtifact({
@@ -85,7 +132,8 @@ export default function App() {
     setIsArtifactOpen(true);
   };
 
-  // Initialize sessions from localStorage or fallback to default pre-populated sessions
+  // Initialize sessions from localStorage, or start with a single real empty
+  // session (no pre-populated fake chat history).
   useEffect(() => {
     const saved = localStorage.getItem('mono_chat_sessions');
     if (saved) {
@@ -101,8 +149,15 @@ export default function App() {
         console.error('Error loading saved sessions from localStorage:', e);
       }
     }
-    setSessions(INITIAL_MOCK_SESSIONS);
-    setActiveSessionId(INITIAL_MOCK_SESSIONS[0].id);
+    const freshSession: ChatSession = {
+      id: `session-${Date.now()}`,
+      title: 'New chat',
+      model: 'auto',
+      timestamp: 'Just now',
+      messages: []
+    };
+    setSessions([freshSession]);
+    setActiveSessionId(freshSession.id);
   }, []);
 
   // Write changes to localStorage whenever sessions update
@@ -211,24 +266,108 @@ export default function App() {
     setIsLoading(true);
 
     try {
-      // Format session messages to send to server proxy
-      // We pass the full context for rich history dialogue!
-      const apiMessages = updatedMessages.map(m => ({
-        role: m.role,
-        content: m.content,
-        attachments: m.attachments?.map(att => ({
-          name: att.name,
-          type: att.type,
-          base64: att.base64,
-          text: att.text
-        }))
-      }));
+      // 1) Scan any attached files for PII server-side (extract + OCR +
+      // detect). Only the REDACTED text is folded into the prompt, so the
+      // model never sees raw file PII. A per-file summary is attached to the
+      // user message for display.
+      const fileScans: FileScanSummary[] = [];
+      let redactedFileText = '';
+      for (const att of attachments || []) {
+        if (!att.base64) continue;
+        try {
+          const res = await fetch('/api/files/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...chatHeaders() },
+            body: JSON.stringify({ filename: att.name, content_type: att.type, data_base64: att.base64 }),
+          });
+          const d = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            fileScans.push({ name: att.name, blocked: false, labels: {}, blockedLabels: [], error: d?.error?.message || `HTTP ${res.status}` });
+            continue;
+          }
+          // Split findings by action: BLOCK-classified labels (credit card,
+          // gov id, secrets) block the whole request just like in chat;
+          // REVERSIBLE labels are redacted and forwarded. PRESERVE findings
+          // are detected but left in place, so they don't count as either.
+          const redactedLabels: Record<string, number> = {};
+          const blockedLabels = new Set<string>();
+          for (const f of (d.findings || []) as Array<{ label: string; action: string }>) {
+            if (f.action === 'BLOCK') blockedLabels.add(f.label);
+            else if (f.action === 'REVERSIBLE') redactedLabels[f.label] = (redactedLabels[f.label] || 0) + 1;
+          }
+          fileScans.push({ name: att.name, blocked: !!d.blocked, labels: redactedLabels, blockedLabels: [...blockedLabels] });
+          if (typeof d.redacted_text === 'string' && d.redacted_text.trim()) {
+            redactedFileText += `\n\n[Attached file: ${att.name} — PII redacted before sending]\n${d.redacted_text.trim()}`;
+          }
+        } catch (err: any) {
+          fileScans.push({ name: att.name, blocked: false, labels: {}, blockedLabels: [], error: err.message || 'scan failed' });
+        }
+      }
+      if (fileScans.length > 0) {
+        const withScans = { ...userMessage, fileScans };
+        const msgs = updatedMessages.map(m => m.id === userMessage.id ? withScans : m);
+        saveSessions(sessions.map(s => s.id === activeSessionId ? { ...updatedSession, messages: msgs } : s));
+      }
+
+      // A file containing BLOCK-classified PII (credit card, gov ID, secret)
+      // blocks the whole request -- consistent with chat: BLOCK content never
+      // reaches a model. Stop here and surface a blocked banner instead of
+      // forwarding the (redacted) file text.
+      const blockedFiles = fileScans.filter(fs => fs.blocked && fs.blockedLabels.length > 0);
+      if (blockedFiles.length > 0) {
+        const allLabels = Array.from(new Set(blockedFiles.flatMap(fs => fs.blockedLabels)));
+        const blockedMessage: Message = {
+          id: `msg-ai-blocked-${Date.now()}`,
+          role: 'assistant',
+          content: `This request was intercepted and blocked by the Torkq Policy Gateway. An attached file contains content classified BLOCK (${allLabels.join(', ')}), which is never sent to a model.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          guardrail: {
+            type: allLabels.includes('SECRET') ? 'secret' : 'pii',
+            status: 'blocked',
+            title: 'Policy Violation: File Content Blocked',
+            message: `Blocked file${blockedFiles.length > 1 ? 's' : ''}: ${blockedFiles.map(f => f.name).join(', ')}. Labels: ${allLabels.join(', ')}.`,
+            details: allLabels,
+          },
+        };
+        saveSessions(sessions.map(s => s.id === activeSessionId
+          ? { ...updatedSession, messages: [...updatedMessages.map(m => m.id === userMessage.id ? { ...userMessage, fileScans } : m), blockedMessage] }
+          : s));
+        setIsLoading(false);
+        return;
+      }
+
+      // 2) Format history for the model. Raw attachment bytes are NOT sent --
+      // they've been replaced by the redacted text folded in below. A user
+      // message the gateway already BLOCKED once is not resent verbatim
+      // (its raw content never reached a model; resending would re-trigger
+      // the same BLOCK on every later turn since the gateway re-scans the
+      // whole history each call).
+      const apiMessages = updatedMessages.map((m, idx) => {
+        const wasBlocked = m.role === 'user' && updatedMessages[idx + 1]?.guardrail?.status === 'blocked';
+        return {
+          role: m.role,
+          content: wasBlocked ? '[Message removed -- blocked by gateway policy on a previous attempt]' : m.content,
+        };
+      });
+
+      // Fold the redacted file text into the newest user turn's content.
+      if (redactedFileText && apiMessages.length > 0) {
+        const last = apiMessages.length - 1;
+        apiMessages[last] = { ...apiMessages[last], content: (apiMessages[last].content || '') + redactedFileText };
+      }
+
+      // If this chat belongs to a project with custom instructions, prepend
+      // them as a system message so every chat in the project shares context.
+      const chatProject = currentSession.projectId ? projects.find(p => p.id === currentSession.projectId) : null;
+      const outboundMessages = chatProject?.instructions?.trim()
+        ? [{ role: 'system', content: chatProject.instructions.trim() }, ...apiMessages]
+        : apiMessages;
 
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...chatHeaders() },
         body: JSON.stringify({
-          messages: apiMessages,
+          messages: outboundMessages,
           model: selectedModel,
           session_id: activeSessionId,
           systemInstruction: "You are a professional, highly scannable, and extremely helpful AI expert. Your prose text should be clean and structured. Use appropriate headings, inline elements, lists, or code blocks when answering coding or architecture requests. Format everything cleanly in Markdown."
@@ -282,7 +421,7 @@ export default function App() {
       console.error('Chat error:', err);
       
       // Gracefully inject an actionable system assistant block with key instructions
-      const errorMessageText = `⚠️ **Error Communicating with the MonoAI Gateway**\n\n${err.message || 'An unexpected error occurred.'}\n\n*   **Connection Check**: Go to Admin > Settings and confirm the Gateway URL, Admin Key, and Test Connection all succeed.\n*   **Virtual Key**: Confirm a Chat Virtual Key is set (Admin > Settings) and that the selected model is on its allowlist.`;
+      const errorMessageText = `⚠️ **Error Communicating with the Torkq Gateway**\n\n${err.message || 'An unexpected error occurred.'}\n\n*   **Connection Check**: Go to Admin > Settings and confirm the Gateway URL, Admin Key, and Test Connection all succeed.\n*   **Virtual Key**: Confirm a Chat Virtual Key is set (Admin > Settings) and that the selected model is on its allowlist.`;
 
       const assistantMessage: Message = {
         id: `msg-ai-err-${Date.now()}`,
@@ -345,6 +484,7 @@ export default function App() {
     sessionStorage.removeItem('mono_authenticated');
     sessionStorage.removeItem('mono_user_email');
     sessionStorage.removeItem('mono_user_role');
+    sessionStorage.removeItem('mono_active_tab');
   };
 
   if (!isAuthenticated) {
@@ -382,17 +522,30 @@ export default function App() {
         userEmail={userEmail}
         userRole={userRole}
         activeTab={activeTab}
-        onChangeTab={setActiveTab}
+        onChangeTab={(tab) => { if (tab === 'projects') setSelectedProjectId(null); setActiveTab(tab); }}
+        projectCount={projects.length}
       />
 
       {/* Persistent Flex Row Wrapper */}
       <div className="flex-1 flex flex-row h-full min-w-0 relative">
-        
+
         {activeTab === 'models' ? (
           <ModelsDirectory
             selectedModel={selectedModel}
             onChangeModel={handleModelChange}
             onRequestPaidFlow={handlePaidFlowPrompt}
+          />
+        ) : activeTab === 'projects' ? (
+          <ProjectsPanel
+            projects={projects}
+            sessions={sessions}
+            selectedProjectId={selectedProjectId}
+            onSelectProject={setSelectedProjectId}
+            onCreateProject={handleCreateProject}
+            onUpdateProject={handleUpdateProject}
+            onDeleteProject={handleDeleteProject}
+            onOpenChat={handleSelectSession}
+            onNewChatInProject={handleNewChatInProject}
           />
         ) : (
           /* Main chat stream and input layout wrapper */

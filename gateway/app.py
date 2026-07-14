@@ -17,6 +17,7 @@ from auth.middleware import register_auth_exception_handlers
 from auth.postgres_key_store import PostgresKeyStore
 from auth.rate_limit import TokenBucketRateLimiter
 from auth.store import KeyStore, SqliteKeyStore
+from auth.transaction_store import SqliteTransactionStore
 from auth.user_account_store import SqliteUserAccountStore
 from config import Settings, load_settings
 from detect.pipeline import DetectionPipeline
@@ -159,14 +160,16 @@ async def lifespan(app: FastAPI):
     dynamic_router = DynamicProviderRouter(provider_store)
     admin_account_store = SqliteAdminAccountStore(vault_crypto, storage_path=settings.admin_account_store_path)
     user_account_store = SqliteUserAccountStore(vault_crypto, storage_path=settings.user_account_store_path)
+    transaction_store = SqliteTransactionStore(vault_crypto, storage_path=settings.transaction_store_path)
 
     orchestrator = Orchestrator(
         pii, policy_store, fallback_chain, audit_chain, DETECTOR_VERSIONS, PACK_VERSIONS,
-        dynamic_router=dynamic_router,
+        dynamic_router=dynamic_router, transaction_store=transaction_store,
     )
 
     app.state.settings = settings
     app.state.pii = pii
+    app.state.detection_pipeline = pipeline
     app.state.vault_store = vault_store
     app.state.policy_store = policy_store
     app.state.key_store = key_store
@@ -179,6 +182,7 @@ async def lifespan(app: FastAPI):
     app.state.provider_store = provider_store
     app.state.admin_account_store = admin_account_store
     app.state.user_account_store = user_account_store
+    app.state.transaction_store = transaction_store
 
     yield
 
@@ -208,12 +212,14 @@ from api import admin as _admin_api  # noqa: E402
 from api import auth as _auth_api  # noqa: E402
 from api import chat as _chat_api  # noqa: E402
 from api import evidence as _evidence_api  # noqa: E402
+from api import files as _files_api  # noqa: E402
 from api import health as _health_api  # noqa: E402
 from api import metrics as _metrics_api  # noqa: E402
 
 app.include_router(_chat_api.router)
 app.include_router(_health_api.router)
 app.include_router(_evidence_api.router)
+app.include_router(_files_api.router)
 app.include_router(_admin_api.router)
 app.include_router(_auth_api.router)
 app.include_router(_metrics_api.router)

@@ -16,6 +16,14 @@ export interface GuardrailDecision {
   details?: string[];
 }
 
+export interface FileScanSummary {
+  name: string;
+  blocked: boolean;
+  labels: Record<string, number>; // redacted (REVERSIBLE) labels, e.g. { EMAIL: 2 }
+  blockedLabels: string[];         // BLOCK-classified labels, e.g. ['CREDIT_CARD','GOV_ID']
+  error?: string;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant';
@@ -23,6 +31,7 @@ export interface Message {
   timestamp: string;
   attachments?: Attachment[];
   guardrail?: GuardrailDecision;
+  fileScans?: FileScanSummary[]; // PII scan results for attached files
 }
 
 export interface ChatSession {
@@ -31,6 +40,17 @@ export interface ChatSession {
   messages: Message[];
   model: string;
   timestamp: string;
+  projectId?: string; // chat scoped to a Project (Claude-style projects)
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  instructions: string; // custom instructions applied to chats in this project
+  color: string;        // accent color for the project icon
+  createdAt: number;
+  updatedAt: number;
 }
 
 // Widened to `string` (was a fixed literal union of mock model ids) because
@@ -115,10 +135,15 @@ export interface RbacMatrix {
   };
 }
 
+// Real per-request record from GET /v1/admin/transactions
+// (gateway/auth/transaction_store.py). Backs the Users-tab prompt drill-down.
 export interface UserPromptTransaction {
   id: string;
-  timestamp: string;
-  model: string;
+  session_id: string | null;
+  timestamp: number; // epoch seconds
+  team_id: string | null;
+  virtual_key_id: string | null;
+  model: string | null;
   originalPrompt: string;
   redactedPrompt: string;
   llmReply: string;
@@ -127,6 +152,6 @@ export interface UserPromptTransaction {
   redactionRulesTriggered: string[];
   inputTokens: number;
   outputTokens: number;
-  cost: number;
+  cost: number | null;
 }
 

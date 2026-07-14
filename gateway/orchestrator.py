@@ -43,6 +43,20 @@ from router.normalizer import RequestNormalizer
 _ROUTER_MIN_CONFIDENCE = 0.4
 
 
+def _last_user_text(messages: list) -> str:
+    """The newest user turn's text. A chat request carries the whole
+    conversation history for context, but the per-user transaction view
+    should show only what the user actually said *this* turn -- not the
+    entire running transcript re-dumped on every request."""
+    for m in reversed(messages):
+        if getattr(m, "role", None) == "user" and isinstance(getattr(m, "content", None), str):
+            return m.content
+    for m in reversed(messages):
+        if isinstance(getattr(m, "content", None), str):
+            return m.content
+    return ""
+
+
 class ProviderFailureError(Exception):
     def __init__(self, tier: str, session_id: str, audit_record: AuditRecord) -> None:
         super().__init__(f"all providers down for tier {tier!r}")
@@ -81,6 +95,8 @@ class Prepared:
     team_id: str | None
     sanitize_result: SanitizeResult
     sanitized_prompt: str
+    original_prompt: str
+    redacted_prompt: str
     difficulty: str
     router_decision: RouterDecision
     fb_result: FallbackResult
@@ -101,6 +117,7 @@ class Orchestrator:
         embedding_classifier: EmbeddingRouterClassifier | None = None,
         embedding_router: EmbeddingRouter | None = None,
         dynamic_router: DynamicProviderRouter | None = None,
+        transaction_store: Any = None,
     ) -> None:
         self._pii = pii
         self._policy_store = policy_store
@@ -112,6 +129,9 @@ class Orchestrator:
         self._embedding_classifier = embedding_classifier or EmbeddingRouterClassifier.load()
         self._embedding_router = embedding_router or EmbeddingRouter.load()
         self._dynamic_router = dynamic_router
+        # Optional per-request prompt/reply store (gateway/auth/transaction_store.py)
+        # backing the admin Users-tab drill-down. None in tests / when unset.
+        self._transaction_store = transaction_store
 
     def _route_failure_record(
         self,
@@ -140,6 +160,40 @@ class Orchestrator:
             total_ms=round((time.monotonic() - t_start) * 1000.0, 3),
         )
 
+    def _record_transaction(
+        self,
+        *,
+        request_id: str,
+        session_id: str | None,
+        team_id: str | None,
+        virtual_key_id: str | None,
+        model: str | None,
+        status: str,
+        redaction_rules: list[str],
+        input_tokens: int,
+        output_tokens: int,
+        cost: float | None,
+        original_prompt: str,
+        redacted_prompt: str,
+        llm_reply: str,
+        rehydrated_reply: str,
+    ) -> None:
+        """Best-effort write to the per-user prompt/reply store. Never lets a
+        store failure break the response path -- the transaction view is an
+        admin convenience, not part of request correctness."""
+        if self._transaction_store is None:
+            return
+        try:
+            self._transaction_store.record(
+                request_id=request_id, session_id=session_id, team_id=team_id, virtual_key_id=virtual_key_id,
+                model=model, status=status, redaction_rules=redaction_rules,
+                input_tokens=input_tokens, output_tokens=output_tokens, cost=cost,
+                original_prompt=original_prompt, redacted_prompt=redacted_prompt,
+                llm_reply=llm_reply, rehydrated_reply=rehydrated_reply,
+            )
+        except Exception:  # noqa: BLE001 -- deliberately swallow; see docstring
+            pass
+
     async def prepare_dispatch(
         self,
         raw_payload: dict[str, Any],
@@ -154,6 +208,7 @@ class Orchestrator:
 
         ctx = self._normalizer.normalize(raw_payload)
         policy = self._policy_store.get(policy_id)
+        original_prompt = _last_user_text(ctx.messages)
 
         t0 = time.monotonic()
         try:
@@ -171,6 +226,15 @@ class Orchestrator:
             )
             self._audit_chain.append(record)
             err.audit_record = record
+            # A blocked request never reaches a model, but the admin drill-down
+            # still shows it (status=blocked, no reply) so the operator can see
+            # what was rejected and why.
+            self._record_transaction(
+                request_id=request_id, session_id=session_id, team_id=team_id, virtual_key_id=virtual_key_id,
+                model=ctx.model_hint, status="blocked", redaction_rules=err.labels,
+                input_tokens=0, output_tokens=0, cost=None,
+                original_prompt=original_prompt, redacted_prompt="", llm_reply="", rehydrated_reply="",
+            )
             raise
         pii_sanitize_ms = (time.monotonic() - t0) * 1000.0
         REQUEST_DURATION_SECONDS.labels(stage="sanitize").observe(pii_sanitize_ms / 1000.0)
@@ -178,6 +242,7 @@ class Orchestrator:
 
         sanitized_ctx = ctx.model_copy(update={"messages": sanitize_result.messages})
         sanitized_prompt = "\n".join(m.content for m in sanitize_result.messages if isinstance(m.content, str))
+        redacted_prompt = _last_user_text(sanitize_result.messages)
 
         t1 = time.monotonic()
         dynamic_route = self._dynamic_router.resolve_route(ctx.model_hint) if self._dynamic_router else None
@@ -231,6 +296,7 @@ class Orchestrator:
             request_id=request_id, session_id=session_id, policy=policy,
             virtual_key_id=virtual_key_id, team_id=team_id,
             sanitize_result=sanitize_result, sanitized_prompt=sanitized_prompt,
+            original_prompt=original_prompt, redacted_prompt=redacted_prompt,
             difficulty=difficulty, router_decision=router_decision, fb_result=fb_result, t_start=t_start,
             pii_sanitize_ms=pii_sanitize_ms, router_ms=router_ms,
         )
@@ -246,10 +312,16 @@ class Orchestrator:
         p = await self.prepare_dispatch(raw_payload, policy_id, virtual_key_id, team_id, session_id)
 
         t2 = time.monotonic()
-        with stage_span("output_scan", request_id=p.request_id, session_id=p.session_id):
-            output_text, output_token_ids = self._pii.scan_output(
-                p.fb_result.response.content, p.session_id, p.policy
-            )
+        if p.policy.output_scan.enabled:
+            with stage_span("output_scan", request_id=p.request_id, session_id=p.session_id):
+                output_text, output_token_ids = self._pii.scan_output(
+                    p.fb_result.response.content, p.session_id, p.policy
+                )
+        else:
+            # Output scanning disabled: the model's response is returned as-is
+            # (no new output-side redaction). Input-side tokens are still
+            # rehydrated below so the user's own PII placeholders resolve back.
+            output_text, output_token_ids = p.fb_result.response.content, set()
         output_scan_ms = (time.monotonic() - t2) * 1000.0
         REQUEST_DURATION_SECONDS.labels(stage="output_scan").observe(output_scan_ms / 1000.0)
         record_latency("output_scan", output_scan_ms)
@@ -317,6 +389,19 @@ class Orchestrator:
             self._audit_chain.append(record)
         REQUEST_DURATION_SECONDS.labels(stage="total").observe(total_ms / 1000.0)
         record_latency("total", total_ms)
+
+        usage_for_tx = p.fb_result.response.usage or {}
+        self._record_transaction(
+            request_id=p.request_id, session_id=p.session_id, team_id=p.team_id, virtual_key_id=p.virtual_key_id,
+            model=p.fb_result.response.model_id,
+            status="redacted" if p.sanitize_result.redacted_count > 0 else "clean",
+            redaction_rules=sorted(p.sanitize_result.span_counts_by_label.keys()),
+            input_tokens=usage_for_tx.get("prompt_tokens", 0),
+            output_tokens=usage_for_tx.get("completion_tokens", 0),
+            cost=cost_usd,
+            original_prompt=p.original_prompt, redacted_prompt=p.redacted_prompt,
+            llm_reply=p.fb_result.response.content, rehydrated_reply=final_text,
+        )
 
         usage = p.fb_result.response.usage or {}
         record_tokens(usage.get("prompt_tokens", 0), "prompt")

@@ -93,7 +93,7 @@ export default function SignIn({ onSignIn }: SignInProps) {
           <div className="w-6 h-6 bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center rounded-[2px]">
             <Shield size={12} className="text-indigo-400" />
           </div>
-          <span className="text-[13px] font-mono tracking-widest font-bold text-white/90">MONOAI</span>
+          <span className="text-[13px] font-mono tracking-widest font-bold text-white/90">TORKQ</span>
           <span className="text-[9px] font-mono bg-white/[0.04] border border-white/10 px-1.5 py-0.5 rounded-[1px] text-white/40 tracking-wider">GATEWAY</span>
         </div>
 
@@ -102,7 +102,7 @@ export default function SignIn({ onSignIn }: SignInProps) {
 
           <div className="space-y-2 mb-6">
             <h1 className="text-xl font-medium tracking-tight text-white select-none">
-              {loginTab === 'user' && userMode === 'register' ? 'Create your MonoAI account' : 'Sign in to MonoAI'}
+              {loginTab === 'user' && userMode === 'register' ? 'Create your Torkq account' : 'Sign in to Torkq'}
             </h1>
             <p className="text-xs text-white/40 leading-relaxed select-none">
               {loginTab === 'admin'

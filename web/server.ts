@@ -79,7 +79,8 @@ app.post("/api/chat", async (req, res) => {
           }
         }
       }
-      return { role: m.role === "assistant" ? "assistant" : "user", content };
+      const role = m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user";
+      return { role, content };
     });
 
     const gatewayUrl = gatewayUrlFor(req);
@@ -205,6 +206,31 @@ app.get("/api/me", async (req, res) => {
   try {
     const upstream = await fetch(`${gatewayUrl}/v1/me`, {
       headers: { Authorization: `Bearer ${virtualKey}` },
+    });
+    const text = await upstream.text();
+    res.status(upstream.status);
+    const contentType = upstream.headers.get("content-type");
+    if (contentType) res.setHeader("content-type", contentType);
+    res.send(text);
+  } catch (error: any) {
+    res.status(502).json({
+      error: { type: "proxy_error", message: error.message || `Failed to reach gateway at ${gatewayUrl}` },
+    });
+  }
+});
+
+// Scans an uploaded file for PII (gateway/api/files.py POST /v1/files/scan):
+// extracts text (OCR for images/scanned PDFs), detects PII, returns the
+// redacted text + findings. Attached to the caller's own virtual key so the
+// file is scanned under that key's policy.
+app.post("/api/files/scan", async (req, res) => {
+  const gatewayUrl = gatewayUrlFor(req);
+  const virtualKey = req.header("x-monoai-virtual-key") || process.env.MONOAI_VIRTUAL_KEY || "";
+  try {
+    const upstream = await fetch(`${gatewayUrl}/v1/files/scan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${virtualKey}` },
+      body: JSON.stringify(req.body ?? {}),
     });
     const text = await upstream.text();
     res.status(upstream.status);

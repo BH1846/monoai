@@ -84,6 +84,9 @@ class Settings:
     provider_store_path: str = field(default_factory=lambda: os.environ.get("PROVIDER_STORE_PATH", "./gateway_providers.sqlite"))
     admin_account_store_path: str = field(default_factory=lambda: os.environ.get("ADMIN_ACCOUNT_STORE_PATH", "./gateway_admin_accounts.sqlite"))
     user_account_store_path: str = field(default_factory=lambda: os.environ.get("USER_ACCOUNT_STORE_PATH", "./gateway_user_accounts.sqlite"))
+    # Per-request prompt/reply store backing the admin Users-tab drill-down
+    # (gateway/auth/transaction_store.py). Raw text is vault-encrypted at rest.
+    transaction_store_path: str = field(default_factory=lambda: os.environ.get("TRANSACTION_STORE_PATH", "./gateway_transactions.sqlite"))
     # Default monthly budget cap auto-applied to self-registered accounts
     # (POST /v1/auth/register) -- admin-created keys via /v1/admin/keys are
     # unaffected. Keeps unauthenticated self-signup from being a blank check

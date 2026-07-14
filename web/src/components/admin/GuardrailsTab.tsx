@@ -72,7 +72,7 @@ export default function GuardrailsTab({
           <span className="text-xs font-mono font-bold uppercase text-white/90">Pre-Flight Guardrail Policies</span>
         </div>
         <p className="text-xs text-white/45 leading-relaxed">
-          MonoAI scans every incoming request before dispatching it to external LLMs. Adjust scan profiles and verify detection models dynamically below.
+          Torkq scans every incoming request before dispatching it to external LLMs. Adjust scan profiles and verify detection models dynamically below.
         </p>
       </div>
 

@@ -109,10 +109,52 @@ class OnnxMiniLMBackend:
         self._session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
         self._tokenizer = Tokenizer.from_file(tokenizer_path)
 
+    # Position-embedding table size baked into the exported ONNX graph
+    # (standard DistilBERT limit). A single self._session.run() call with a
+    # longer sequence fails with an ONNX Runtime broadcast error rather than
+    # a clean Python exception, which otherwise takes down the whole
+    # request (500) -- this matters here more than for most NER uses since
+    # scan_output() runs this over full (potentially long) model responses,
+    # not just short user prompts.
+    _MAX_SEQ_LEN = 512
+    # Conservative chars-per-chunk estimate so most text needs no re-check;
+    # _next_chunk_end() verifies against the real tokenizer regardless.
+    _CHUNK_CHAR_ESTIMATE = 800
+
     def predict(self, text: str) -> list[RawSpan]:
+        probe = self._tokenizer.encode(text)
+        if len(probe.ids) <= self._MAX_SEQ_LEN:
+            return self._predict_chunk(text, probe, base_offset=0)
+
+        spans: list[RawSpan] = []
+        start = 0
+        while start < len(text):
+            end = self._next_chunk_end(text, start)
+            chunk_text = text[start:end]
+            chunk_encoding = self._tokenizer.encode(chunk_text)
+            spans.extend(self._predict_chunk(chunk_text, chunk_encoding, base_offset=start))
+            start = end
+        return spans
+
+    def _next_chunk_end(self, text: str, start: int) -> int:
+        """Character end index for a chunk starting at `start`, sized to
+        stay under _MAX_SEQ_LEN tokens once re-tokenized on its own (each
+        chunk gets its own encode() call/special tokens, so this is exact
+        per chunk, not an approximation carried over from the full-text
+        tokenization). Prefers a whitespace boundary so words aren't split."""
+        end = min(len(text), start + self._CHUNK_CHAR_ESTIMATE)
+        if end < len(text):
+            boundary = text.rfind(" ", start, end)
+            if boundary > start:
+                end = boundary
+        while end > start and len(self._tokenizer.encode(text[start:end]).ids) > self._MAX_SEQ_LEN:
+            boundary = text.rfind(" ", start, end - 1)
+            end = boundary if boundary > start else start + max(1, (end - start) // 2)
+        return max(end, start + 1)
+
+    def _predict_chunk(self, chunk_text: str, encoding, base_offset: int) -> list[RawSpan]:
         import numpy as np
 
-        encoding = self._tokenizer.encode(text)
         input_ids = np.array([encoding.ids], dtype=np.int64)
         attention_mask = np.array([encoding.attention_mask], dtype=np.int64)
         outputs = self._session.run(None, {"input_ids": input_ids, "attention_mask": attention_mask})
@@ -131,8 +173,8 @@ class OnnxMiniLMBackend:
             span_label = self.RAW_LABEL_TO_SPANLABEL.get(current_label) if current_label else None
             if span_label is not None and current_start is not None:
                 spans.append(RawSpan(
-                    start=current_start, end=current_end,
-                    text=text[current_start:current_end],
+                    start=base_offset + current_start, end=base_offset + current_end,
+                    text=chunk_text[current_start:current_end],
                     label=span_label,
                     source=SpanSource.NER,
                     confidence=current_conf / max(count, 1),

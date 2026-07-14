@@ -36,5 +36,5 @@ token_budget_mode: false
 compressible_length_threshold: 20
 
 output_scan:
-  enabled: true
+  enabled: false
   reuse_input_rules: true

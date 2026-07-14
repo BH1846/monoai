@@ -310,6 +310,25 @@ class PiiEngine:
 
         with stage_span("vault", session_id=session_id, input_token_count=len(input_token_ids)):
             final_text = _TOKEN_RE.sub(_sub, text)
+
+            # Lenient fallback: models sometimes rewrite the placeholder rather
+            # than echoing it verbatim (e.g. "[PII_TOKEN_75abe732fa]" comes back
+            # as "[PII_NAME 75abe732fa]" or "(PII_TOKEN 75abe732fa)"), which the
+            # strict regex above misses -- leaking the token into the reply. The
+            # 10-hex token id is unique and preserved even when the prefix is
+            # mangled, so for any input token still findable by its id inside a
+            # bracket/paren, resolve it to the real value.
+            for token_id in input_token_ids:
+                if token_id in output_token_ids or token_id not in final_text:
+                    continue
+                value = self._vault.get(session_id, token_id)
+                if value is None:
+                    continue
+                final_text = re.sub(
+                    r"[\[(][^\[\]()]*" + re.escape(token_id) + r"[^\[\]()]*[\])]",
+                    lambda _m, v=value: v,
+                    final_text,
+                )
         return final_text, unresolved, bool(unresolved)
 
     def _apply_tokens(

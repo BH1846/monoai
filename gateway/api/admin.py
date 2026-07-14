@@ -61,6 +61,47 @@ async def revoke_key(
     return {"revoked": key_id}
 
 
+@router.get("/v1/admin/transactions")
+async def list_transactions(
+    request: Request,
+    team_id: str | None = None,
+    virtual_key_id: str | None = None,
+    limit: int = 100,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Per-user prompt/reply history backing the Users-tab drill-down. Returns
+    the real Original -> Redacted -> Reply -> Rehydrated flow per request for a
+    given virtual key (or team). Admin-gated: the raw prompt/reply text this
+    exposes is the most sensitive data the gateway holds."""
+    _check_admin(authorization, request.app.state.settings.admin_key)
+    store = getattr(request.app.state, "transaction_store", None)
+    if store is None:
+        return {"transactions": []}
+    txns = store.list_transactions(team_id=team_id, virtual_key_id=virtual_key_id, limit=min(limit, 500))
+    return {
+        "transactions": [
+            {
+                "id": t.request_id,
+                "session_id": t.session_id,
+                "timestamp": t.ts,
+                "team_id": t.team_id,
+                "virtual_key_id": t.virtual_key_id,
+                "model": t.model,
+                "status": t.status,
+                "redactionRulesTriggered": t.redaction_rules,
+                "inputTokens": t.input_tokens,
+                "outputTokens": t.output_tokens,
+                "cost": t.cost,
+                "originalPrompt": t.original_prompt,
+                "redactedPrompt": t.redacted_prompt,
+                "llmReply": t.llm_reply,
+                "rehydratedReply": t.rehydrated_reply,
+            }
+            for t in txns
+        ]
+    }
+
+
 @router.post("/v1/admin/account")
 async def save_admin_account(
     request: Request,
