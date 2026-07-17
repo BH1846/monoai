@@ -20,10 +20,18 @@ class AuditRecord(BaseModel):
     ts: float
     request_id: str
     session_id: str
-    # Provenance for records ingested from a remote agent (manager/agent
-    # split). None for records the manager (gateway) produced itself on its
-    # own request path -- preserves every existing chain unchanged.
+    # -- provenance (see audit/chain.py's _OMIT_WHEN_NONE) --
+    # Both are None for a record this gateway generated itself on its own
+    # request path, and set only when the record arrived from elsewhere.
+    # Adding fields here is ONLY safe because _canonical_json omits them
+    # when None -- see the warning in audit/chain.py before adding more.
+    #
+    # `agent_id`: ingested from an enrolled remote agent (agent/ split).
+    # `origin_gateway`: forwarded in from a peer gateway instance whose
+    # operator runs their own full Torqk stack (audit forwarding). Lets the
+    # Audit Log tab tell "Rahul's box" apart from locally-generated records.
     agent_id: str | None = None
+    origin_gateway: str | None = None
     virtual_key_id: str | None = None
     team_id: str | None = None
     event: Literal[

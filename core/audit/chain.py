@@ -14,6 +14,29 @@ from contracts.audit import AuditRecord
 
 from audit.signer import sign_record, verify_record
 
+# Optional provenance fields added to AuditRecord AFTER records were already
+# being persisted in the wild. For these, "key absent" and "key present but
+# null" mean the SAME thing, so a None value is omitted from the canonical
+# form entirely.
+#
+# WHY THIS EXISTS -- read before adding any field to AuditRecord:
+# the canonical form is `model_dump()`, so it is coupled to the pydantic
+# schema. Adding an optional field makes every ALREADY-WRITTEN record
+# serialize with a `"new_field": null` key that wasn't there when its hash
+# was computed -- silently invalidating the hash of every historical record
+# and making verify() report the whole chain as TAMPERED. That is exactly
+# what happened when `agent_id` was introduced: a real 108-record log failed
+# verification, with record 0 hashing to f5d3bf59... instead of its stored
+# 05a5d0f8... purely because of the extra null key.
+#
+# Omitting None-valued provenance fields makes such additions backward
+# compatible by construction: an old record (field absent) and a new local
+# record (field present, None) produce byte-identical canonical JSON. When a
+# field IS set, it is included and therefore fully hash-covered/tamper-
+# evident. Any new optional field must be added here too -- and
+# tests/unit/test_audit_chain_compat.py pins that rule.
+_OMIT_WHEN_NONE = ("agent_id", "origin_gateway")
+
 
 def _canonical_json(record: AuditRecord) -> str:
     # "signature" is excluded alongside "hash": it's derived FROM the
@@ -22,6 +45,9 @@ def _canonical_json(record: AuditRecord) -> str:
     # would hash differently than it did at write time (signature is
     # None during the initial compute, non-None once persisted).
     data = record.model_dump(exclude={"hash", "signature"}, mode="json")
+    for field in _OMIT_WHEN_NONE:
+        if data.get(field) is None:
+            data.pop(field, None)
     return json.dumps(data, sort_keys=True, default=str)
 
 

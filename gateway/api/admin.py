@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from contracts.audit import AuditRecord
 from fastapi import APIRouter, Header, HTTPException, Request
+from pydantic import ValidationError
 
 router = APIRouter()
 
@@ -128,6 +130,59 @@ async def get_admin_account(email: str, request: Request) -> dict[str, Any]:
     if account is None:
         raise HTTPException(status_code=404, detail="no admin account saved for this email")
     return {"email": account.email, "admin_key": account.admin_key}
+
+
+@router.post("/v1/admin/audit/ingest")
+async def ingest_audit_record(
+    request: Request,
+    body: dict[str, Any],
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Accept one AuditRecord forwarded from a PEER gateway instance and
+    append it into THIS gateway's own hash chain, so it shows up in the
+    Audit Log exactly like a locally-generated record (no parallel store).
+    The sender is core/audit/sinks.py's ForwardingSink.
+
+    Trust model: a shared admin key, deliberately -- this is trusted
+    gateway-to-gateway (each operator runs their own full Torqk stack), not
+    the untrusted-remote-source case that the enrollment/keypair flow in
+    api/agents.py exists for.
+
+    `async def` is load-bearing: AuditChain.append() is a read-modify-write
+    of the running last_hash and is NOT thread-safe. As an async handler this
+    runs on the event loop with no await between read and write, so
+    concurrent forwarders can't interleave and corrupt the chain. A plain
+    `def` would be handed to FastAPI's threadpool and race.
+
+    Idempotent: delivery is at-least-once, so an already-seen record_id is
+    answered 200 (not re-appended), letting the sender dequeue cleanly.
+    """
+    _check_admin(authorization, request.app.state.settings.admin_key)
+
+    try:
+        record = AuditRecord.model_validate(body)
+    except ValidationError as err:
+        raise HTTPException(status_code=400, detail=f"malformed audit record: {err.error_count()} error(s)")
+
+    dedupe = getattr(request.app.state, "audit_ingest_dedupe", None)
+    if dedupe is not None and dedupe.seen(record.record_id):
+        return {"accepted": False, "duplicate": True, "record_id": record.record_id}
+
+    # The sender stamps origin_gateway; refuse an unattributed record rather
+    # than silently filing a peer's record as locally-generated.
+    if not record.origin_gateway:
+        raise HTTPException(status_code=400, detail="forwarded record must carry origin_gateway")
+
+    appended = request.app.state.audit_chain.append(record)
+    if dedupe is not None:
+        dedupe.mark(record.record_id, record.origin_gateway)
+    return {
+        "accepted": True,
+        "duplicate": False,
+        "record_id": appended.record_id,
+        "origin_gateway": appended.origin_gateway,
+        "hash": appended.hash,
+    }
 
 
 @router.post("/v1/admin/policies/reload")

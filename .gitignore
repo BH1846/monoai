@@ -8,7 +8,12 @@ __pycache__/
 .ruff_cache/
 *.sqlite
 *.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 *.jsonl
+# Timestamped audit-log backups written by scripts/rehash_audit_chain.py
+# (the .bak-<ts> suffix doesn't match *.jsonl above).
+*.jsonl.bak-*
 # SENTINEL agent local state: holds the agent's X25519 PRIVATE key
 # (identity.json), its offline buffer, and cached policy. Never commit.
 agent_state/

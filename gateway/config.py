@@ -98,6 +98,29 @@ class Settings:
     # -- audit --
     audit_log_path: str = field(default_factory=lambda: os.environ.get("MONOAI_AUDIT_LOG_PATH", "./gateway_audit.jsonl"))
 
+    # -- audit forwarding (peer gateway -> manager gateway) --
+    # Every operator runs their own full, independent gateway; one instance is
+    # additionally treated as the "manager" whose Audit Log is the aggregate
+    # view. Setting MONOAI_AUDIT_FORWARD_URL turns THIS instance into a
+    # forwarder: its records are still written locally first (unchanged), then
+    # shipped to the manager out-of-band. Unset = off, and nothing about the
+    # local audit path changes.
+    #
+    # Manager downtime can never affect local chat: forwarding is buffered on
+    # disk and retried on a background thread (core/audit/sinks.py).
+    audit_forward_url: str | None = field(default_factory=lambda: os.environ.get("MONOAI_AUDIT_FORWARD_URL") or None)
+    # The MANAGER's MONOAI_ADMIN_KEY -- trusted gateway-to-gateway shared key.
+    audit_forward_admin_key: str | None = field(default_factory=lambda: os.environ.get("MONOAI_AUDIT_FORWARD_ADMIN_KEY") or None)
+    audit_forward_queue_path: str = field(default_factory=lambda: os.environ.get("MONOAI_AUDIT_FORWARD_QUEUE_PATH", "./gateway_audit_forward_queue.sqlite"))
+    audit_forward_interval_s: float = field(default_factory=lambda: float(os.environ.get("MONOAI_AUDIT_FORWARD_INTERVAL_S", "30")))
+    audit_forward_timeout_s: float = field(default_factory=lambda: float(os.environ.get("MONOAI_AUDIT_FORWARD_TIMEOUT_S", "5")))
+    # Stamped onto forwarded records as `origin_gateway` so the manager's
+    # Audit Log can tell whose instance a record came from.
+    gateway_id: str = field(default_factory=lambda: os.environ.get("MONOAI_GATEWAY_ID") or os.uname().nodename)
+    # Manager side: record_ids already ingested, so at-least-once retries
+    # don't double-append (see gateway/audit_dedupe.py).
+    audit_ingest_dedupe_path: str = field(default_factory=lambda: os.environ.get("MONOAI_AUDIT_INGEST_DEDUPE_PATH", "./gateway_audit_ingest.sqlite"))
+
     # -- agent registry (Wazuh-style manager/agent split) --
     # The manager (this gateway) is the enrollment authority + audit sink for
     # remote SENTINEL agents. Its agent-channel keypair lives in Valkey under

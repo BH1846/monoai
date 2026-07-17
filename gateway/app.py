@@ -11,9 +11,11 @@ import redis
 from agents.keys import load_or_create_manager_keypair
 from agents.store import SqliteAgentStore
 from audit.chain import AuditChain
-from audit.sinks import JsonlSink, PostgresSink, WebhookSink, read_last_hash
+from audit.forward_queue import SqliteForwardQueue
 from audit.signer import load_signing_key as load_record_signing_key
 from audit.signing import load_or_create_signing_key
+from audit.sinks import FanoutSink, ForwardingSink, JsonlSink, PostgresSink, WebhookSink, read_last_hash
+from audit_dedupe import SqliteIngestDedupe
 from auth.admin_account_store import SqliteAdminAccountStore
 from auth.middleware import register_auth_exception_handlers
 from auth.postgres_key_store import PostgresKeyStore
@@ -85,7 +87,7 @@ def _build_key_store(settings: Settings) -> KeyStore:
     return SqliteKeyStore(storage_path=settings.key_store_path)
 
 
-def _build_audit_sink(settings: Settings):
+def _build_primary_audit_sink(settings: Settings):
     if settings.audit_sink == "postgres":
         if not settings.audit_postgres_dsn:
             raise ValueError("AUDIT_SINK=postgres requires AUDIT_POSTGRES_DSN")
@@ -95,6 +97,30 @@ def _build_audit_sink(settings: Settings):
             raise ValueError("AUDIT_SINK=webhook requires AUDIT_WEBHOOK_URL")
         return WebhookSink(settings.audit_webhook_url)
     return JsonlSink(settings.audit_log_path)
+
+
+def _wrap_audit_sink_for_forwarding(settings: Settings, primary):
+    """Optionally fan the primary (local, durable) sink out to a
+    ForwardingSink that ships records to a peer "manager" gateway.
+
+    Forwarding is purely additive: the local sink stays first and unchanged,
+    so nothing about local audit durability -- or the chat path -- depends on
+    the manager being reachable. Unset MONOAI_AUDIT_FORWARD_URL = the primary
+    sink is returned untouched.
+    """
+    if not settings.audit_forward_url:
+        return primary
+    if not settings.audit_forward_admin_key:
+        raise ValueError("MONOAI_AUDIT_FORWARD_URL requires MONOAI_AUDIT_FORWARD_ADMIN_KEY (the manager's admin key)")
+    forwarding = ForwardingSink(
+        url=settings.audit_forward_url,
+        admin_key=settings.audit_forward_admin_key,
+        queue=SqliteForwardQueue(settings.audit_forward_queue_path),
+        gateway_id=settings.gateway_id,
+        interval_s=settings.audit_forward_interval_s,
+        timeout=settings.audit_forward_timeout_s,
+    )
+    return FanoutSink([primary, forwarding])
 
 
 def _build_fallback_chain(settings: Settings, provider: ProviderAdapter) -> FallbackChain:
@@ -137,17 +163,23 @@ async def lifespan(app: FastAPI):
     key_store = _build_key_store(settings)
     rate_limiter = TokenBucketRateLimiter(valkey_client)
 
-    audit_sink = _build_audit_sink(settings)
+    # Build the PRIMARY sink first and bootstrap last_hash from it, THEN wrap
+    # it for forwarding. Order matters: these isinstance checks must see the
+    # real local sink, not a FanoutSink wrapper -- otherwise neither branch
+    # matches, initial_last_hash silently stays None, and the chain breaks at
+    # every restart (the exact bug read_last_hash exists to prevent).
+    primary_audit_sink = _build_primary_audit_sink(settings)
     # Resume the chain from the existing log's last hash, if any -- a
     # fresh AuditChain(initial_last_hash=None) after a process restart
     # would otherwise write prev_hash=None into a record appended after
     # real prior history, breaking the chain at every restart.
     initial_last_hash = None
-    if isinstance(audit_sink, JsonlSink):
+    if isinstance(primary_audit_sink, JsonlSink):
         initial_last_hash = read_last_hash(settings.audit_log_path)
-    elif isinstance(audit_sink, PostgresSink):
-        existing = audit_sink.read_all()
+    elif isinstance(primary_audit_sink, PostgresSink):
+        existing = primary_audit_sink.read_all()
         initial_last_hash = existing[-1].hash if existing else None
+    audit_sink = _wrap_audit_sink_for_forwarding(settings, primary_audit_sink)
     record_signing_key = None
     if settings.audit_sign_enabled:
         record_signing_key = load_record_signing_key(settings.audit_sign_key, settings.session_token_secret)
@@ -174,6 +206,10 @@ async def lifespan(app: FastAPI):
     )
     manager_agent_key = load_or_create_manager_keypair(valkey_client, key_name=settings.agent_channel_key_name)
 
+    # Manager side of audit forwarding: remembers record_ids already ingested
+    # from peer gateways so an at-least-once retry can't double-append.
+    audit_ingest_dedupe = SqliteIngestDedupe(storage_path=settings.audit_ingest_dedupe_path)
+
     orchestrator = Orchestrator(
         pii, policy_store, fallback_chain, audit_chain, DETECTOR_VERSIONS, PACK_VERSIONS,
         dynamic_router=dynamic_router, transaction_store=transaction_store,
@@ -197,6 +233,7 @@ async def lifespan(app: FastAPI):
     app.state.transaction_store = transaction_store
     app.state.agent_store = agent_store
     app.state.manager_agent_key = manager_agent_key
+    app.state.audit_ingest_dedupe = audit_ingest_dedupe
 
     yield
 
@@ -206,6 +243,13 @@ async def lifespan(app: FastAPI):
     admin_account_store.close()
     user_account_store.close()
     agent_store.close()
+    audit_ingest_dedupe.close()
+    # Stops the forwarding worker thread + closes its queue/client. Sinks
+    # were previously never closed; that leaked WebhookSink's httpx client
+    # and would now leave the forwarder thread running past shutdown.
+    _close_audit_sink = getattr(audit_sink, "close", None)
+    if _close_audit_sink is not None:
+        _close_audit_sink()
     await dynamic_router.aclose()
     if isinstance(provider, (OllamaProvider, OpenAICompatibleProvider)):
         await provider.aclose()
