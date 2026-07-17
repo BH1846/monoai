@@ -98,6 +98,16 @@ class Settings:
     # -- audit --
     audit_log_path: str = field(default_factory=lambda: os.environ.get("MONOAI_AUDIT_LOG_PATH", "./gateway_audit.jsonl"))
 
+    # -- agent registry (Wazuh-style manager/agent split) --
+    # The manager (this gateway) is the enrollment authority + audit sink for
+    # remote SENTINEL agents. Its agent-channel keypair lives in Valkey under
+    # a name DISTINCT from the vault master key -- separate trust domains.
+    agent_store_path: str = field(default_factory=lambda: os.environ.get("AGENT_STORE_PATH", "./gateway_agents.sqlite"))
+    agent_channel_key_name: str = field(default_factory=lambda: os.environ.get("AGENT_CHANNEL_KEY_NAME", "monoai:agent_channel:manager_key"))
+    agent_enroll_token_ttl_s: float = field(default_factory=lambda: float(os.environ.get("AGENT_ENROLL_TOKEN_TTL_S", "3600")))
+    agent_heartbeat_interval_s: float = field(default_factory=lambda: float(os.environ.get("AGENT_HEARTBEAT_INTERVAL_S", "30")))
+    agent_missed_beats_offline: int = field(default_factory=lambda: int(os.environ.get("AGENT_MISSED_BEATS_OFFLINE", "3")))
+
     # -- provider --
     provider: str = field(default_factory=lambda: os.environ.get("MONOAI_PROVIDER", "stub"))
     ollama_base_url: str = field(default_factory=lambda: os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"))

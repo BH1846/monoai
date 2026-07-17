@@ -20,6 +20,10 @@ class AuditRecord(BaseModel):
     ts: float
     request_id: str
     session_id: str
+    # Provenance for records ingested from a remote agent (manager/agent
+    # split). None for records the manager (gateway) produced itself on its
+    # own request path -- preserves every existing chain unchanged.
+    agent_id: str | None = None
     virtual_key_id: str | None = None
     team_id: str | None = None
     event: Literal[

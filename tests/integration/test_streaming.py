@@ -7,7 +7,7 @@ from pii import PiiEngine
 from policy.store import PolicyStore
 from streaming import HOLDBACK, StreamRehydrator
 from vault.crypto import VaultCrypto
-from vault.session_tokens import derive_session_key, make_token
+from vault.session_tokens import derive_session_key, make_token, make_token_id
 from vault.storage.sqlite_store import SqliteVaultStore
 
 
@@ -49,16 +49,17 @@ async def test_token_split_across_chunks(tmp_path):
     session_id = "session-stream-1"
     session_key = derive_session_key(session_id, "test-server-secret")
 
-    token = make_token(session_key, "a@b.com")  # e.g. "[PII_TOKEN_xxxxxxxxxx]"
-    pii._vault.write_async(session_id, token[len("[PII_TOKEN_"):-1], "a@b.com")
+    token_id = make_token_id(session_key, "a@b.com")
+    token = make_token(session_key, "a@b.com", "EMAIL")  # "<EMAIL_PII_xxxxxxxxxx>"
+    pii._vault.write_async(session_id, token_id, "a@b.com")
 
     full_text = f"Sure, the email is {token} -- let me know if that works."
-    # Split the token itself arbitrarily across 3 chunks (mid-bracket, mid-hex).
-    split_a = full_text.index("[PII_TOKEN_") + 5
+    # Split the token itself arbitrarily across 3 chunks (mid-label, mid-hex).
+    split_a = full_text.index(token) + 5
     split_b = split_a + 8
     pieces = [full_text[:split_a], full_text[split_a:split_b], full_text[split_b:]]
 
-    input_token_ids = {token[len("[PII_TOKEN_"):-1]}
+    input_token_ids = {token_id}
     rehydrator = StreamRehydrator(session_id, pii, policy, input_token_ids)
 
     result = ""
@@ -66,7 +67,7 @@ async def test_token_split_across_chunks(tmp_path):
         result += piece
 
     assert "a@b.com" in result
-    assert "[PII_TOKEN_" not in result
+    assert "_PII_" not in result
     assert "UNRESOLVED" not in result
 
 
@@ -84,13 +85,14 @@ async def test_token_not_fragmented_across_many_small_chunks(tmp_path):
     session_id = "session-stream-fine-grained"
     session_key = derive_session_key(session_id, "test-server-secret")
 
-    token = make_token(session_key, "415-555-0199")
-    pii._vault.write_async(session_id, token[len("[PII_TOKEN_"):-1], "415-555-0199")
+    token_id = make_token_id(session_key, "415-555-0199")
+    token = make_token(session_key, "415-555-0199", "PHONE")  # "<PHONE_PII_xxxxxxxxxx>"
+    pii._vault.write_async(session_id, token_id, "415-555-0199")
 
     full_text = f"[simple] stub response to: Call me at {token} please"
     pieces = [full_text[i:i + 4] for i in range(0, len(full_text), 4)]
 
-    input_token_ids = {token[len("[PII_TOKEN_"):-1]}
+    input_token_ids = {token_id}
     rehydrator = StreamRehydrator(session_id, pii, policy, input_token_ids)
 
     result = ""
@@ -98,7 +100,58 @@ async def test_token_not_fragmented_across_many_small_chunks(tmp_path):
         result += piece
 
     assert "415-555-0199" in result
-    assert "PII_TOKEN" not in result
+    assert "_PII_" not in result
+    assert rehydrator.unresolved == []
+
+
+async def test_longest_token_type_streamed_one_char_at_a_time(tmp_path):
+    """Variable-width regression: type-labeled tokens vary in length, and the
+    LONGEST (<CREDIT_CARD_PII_...> / <DEMOGRAPHIC_PII_...>, 28 chars) is what
+    the streaming holdback is sized for. Stream it one character at a time --
+    the worst case for a fixed-width assumption -- and confirm it's still
+    handed to _process whole and rehydrated exactly once."""
+    pii = _engine(tmp_path)
+    policy = _policy()
+    session_id = "session-stream-longtok"
+    session_key = derive_session_key(session_id, "test-server-secret")
+
+    secret_value = "4111 1111 1111 1111"
+    token_id = make_token_id(session_key, secret_value)
+    token = make_token(session_key, secret_value, "CREDIT_CARD")  # 28 chars, the max width
+    pii._vault.write_async(session_id, token_id, secret_value)
+
+    full_text = f"On file: {token} (ends 1111)."
+    pieces = list(full_text)  # one char per chunk
+
+    rehydrator = StreamRehydrator(session_id, pii, policy, {token_id})
+    result = "".join([p async for p in rehydrator.run(_chunks(pieces))])
+
+    assert secret_value in result
+    assert "_PII_" not in result
+    assert rehydrator.unresolved == []
+
+
+async def test_unrelated_angle_bracket_does_not_break_stream(tmp_path):
+    """A literal '<' that is NOT a token opener (e.g. '5 < 10') must not
+    strand text or fragment a real token later in the stream."""
+    pii = _engine(tmp_path)
+    policy = _policy()
+    session_id = "session-stream-anglebracket"
+    session_key = derive_session_key(session_id, "test-server-secret")
+
+    token_id = make_token_id(session_key, "Priya")
+    token = make_token(session_key, "Priya", "PERSON")
+    pii._vault.write_async(session_id, token_id, "Priya")
+
+    full_text = f"if 5 < 10 and x<y then greet {token} warmly"
+    pieces = [full_text[i:i + 2] for i in range(0, len(full_text), 2)]
+
+    rehydrator = StreamRehydrator(session_id, pii, policy, {token_id})
+    result = "".join([p async for p in rehydrator.run(_chunks(pieces))])
+
+    assert "greet Priya warmly" in result
+    assert "5 < 10 and x<y" in result  # unrelated '<' preserved verbatim
+    assert "_PII_" not in result
     assert rehydrator.unresolved == []
 
 

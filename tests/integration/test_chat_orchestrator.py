@@ -42,7 +42,7 @@ class _FakeRedis:
 
 
 class EchoingStubProvider(ProviderAdapter):
-    """Echoes the full prompt text back verbatim (preserving PII_TOKEN
+    """Echoes the full prompt text back verbatim (preserving the type-labeled
     placeholders). Records every ctx it was called with, so tests can
     assert the provider never received raw PII."""
 
@@ -60,12 +60,12 @@ class EchoingStubProvider(ProviderAdapter):
 
 
 class DuplicatingStubProvider(ProviderAdapter):
-    """Repeats every PII_TOKEN placeholder in the prompt twice in its reply."""
+    """Repeats every type-labeled placeholder in the prompt twice in its reply."""
 
     async def complete(self, request_id: str, model_id: str, ctx: RequestContext) -> ProviderResponse:
         last = ctx.messages[-1]
         text = last.content if isinstance(last.content, str) else ""
-        tokens = re.findall(r"\[PII_TOKEN_[0-9a-f]{10}\]", text)
+        tokens = re.findall(r"<[A-Z][A-Z_]*_PII_[0-9a-f]{10}>", text)
         token = tokens[0] if tokens else "[missing]"
         return ProviderResponse(
             request_id=request_id, model_id=model_id, provider="dup-stub",
@@ -112,7 +112,7 @@ async def test_pii_round_trip_and_provider_never_sees_raw_pii(tmp_path):
     seen_text = provider.seen_contexts[0].messages[-1].content
     assert "jane.doe@example.com" not in seen_text
     assert "415-555-0199" not in seen_text
-    assert "[PII_TOKEN_" in seen_text
+    assert "_PII_" in seen_text
 
     assert "jane.doe@example.com" in result.content
     assert "415-555-0199" in result.content
@@ -120,8 +120,8 @@ async def test_pii_round_trip_and_provider_never_sees_raw_pii(tmp_path):
     assert result.review_required is False
 
     assert "jane.doe@example.com" not in result.sanitized_prompt
-    assert "[PII_TOKEN_" in result.sanitized_prompt
-    assert "[PII_TOKEN_" in result.raw_model_output
+    assert "_PII_" in result.sanitized_prompt
+    assert "_PII_" in result.raw_model_output
 
     assert len(provider.seen_contexts[0].messages) == 2
     assert provider.seen_contexts[0].messages[0].role == "system"
@@ -182,11 +182,11 @@ async def test_duplicate_token_use_still_rehydrates_safely(tmp_path):
     assert result.review_required is False
     assert result.unresolved_tokens == []
     assert result.content.count("Priya") == 2
-    assert "[PII_TOKEN_" not in result.content
+    assert "_PII_" not in result.content
 
 
 class _HallucinatingStubProvider(ProviderAdapter):
-    """Returns a PII_TOKEN reference that was never actually issued --
+    """Returns a placeholder reference that was never actually issued --
     simulates a model inventing a placeholder-shaped string, which must
     surface as review_required rather than crash or silently drop it.
     Uses letters-only hex (no digit run) so output-scan's phone-number
@@ -196,7 +196,7 @@ class _HallucinatingStubProvider(ProviderAdapter):
     async def complete(self, request_id: str, model_id: str, ctx: RequestContext) -> ProviderResponse:
         return ProviderResponse(
             request_id=request_id, model_id=model_id, provider="hallucinating-stub",
-            content="Hi [PII_TOKEN_abcdefabcd], nice to meet you.",
+            content="Hi <PERSON_PII_abcdefabcd>, nice to meet you.",
             usage={"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20}, latency_ms=1.0,
         )
 

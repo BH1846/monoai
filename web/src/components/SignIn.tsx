@@ -43,8 +43,8 @@ export default function SignIn({ onSignIn }: SignInProps) {
       setTimeout(() => {
         const normalizedEmail = inputEmail.toLowerCase();
         if (
-          (normalizedEmail === 'admin@mono.ai' && inputPass === 'admin') ||
-          (normalizedEmail === 'engineer@mono.ai' && inputPass === 'governance2026')
+          (normalizedEmail === 'admin@torkq.com' && inputPass === 'admin') ||
+          (normalizedEmail === 'engineer@torkq.com' && inputPass === 'governance2026')
         ) {
           onSignIn(inputEmail, 'admin');
         } else {
@@ -195,7 +195,7 @@ export default function SignIn({ onSignIn }: SignInProps) {
                   if (error) setError(null);
                 }}
                 disabled={isSubmitting}
-                placeholder={loginTab === 'admin' ? 'admin@mono.ai' : 'you@company.com'}
+                placeholder={loginTab === 'admin' ? 'admin@torkq.com' : 'you@company.com'}
                 className="w-full px-3 py-2 bg-[#0c121a]/60 border border-white/[0.08] rounded-[2px] text-xs text-white/90 placeholder-white/20 focus:border-indigo-500/50 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 transition-all font-mono"
               />
             </div>
@@ -273,19 +273,7 @@ export default function SignIn({ onSignIn }: SignInProps) {
           </form>
 
           {/* Dynamic helper card */}
-          {loginTab === 'admin' ? (
-            <div className="mt-6 pt-5 border-t border-white/[0.03] text-[10px] font-mono text-white/30 space-y-2 select-none">
-              <span className="text-indigo-400 font-semibold block uppercase tracking-wider">
-                Admin Clearances Available:
-              </span>
-              <div className="space-y-1 bg-rose-500/5 border border-rose-500/10 p-2 rounded-[1px]">
-                <div>Operator: <strong className="text-rose-300 font-bold select-all">admin@mono.ai</strong></div>
-                <div>Passkey: <strong className="text-white/70">admin</strong></div>
-                <div className="pt-1.5 mt-1 border-t border-white/5">Operator: <strong className="text-rose-300 font-bold select-all">engineer@mono.ai</strong></div>
-                <div>Passkey: <strong className="text-white/70">governance2026</strong></div>
-              </div>
-            </div>
-          ) : (
+          {loginTab === 'admin' ? null : (
             <div className="mt-6 pt-5 border-t border-white/[0.03] text-[10px] text-white/30 select-none">
               {userMode === 'login' ? (
                 <span>

@@ -8,6 +8,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 import redis
+from agents.keys import load_or_create_manager_keypair
+from agents.store import SqliteAgentStore
 from audit.chain import AuditChain
 from audit.sinks import JsonlSink, PostgresSink, WebhookSink, read_last_hash
 from audit.signer import load_signing_key as load_record_signing_key
@@ -162,6 +164,16 @@ async def lifespan(app: FastAPI):
     user_account_store = SqliteUserAccountStore(vault_crypto, storage_path=settings.user_account_store_path)
     transaction_store = SqliteTransactionStore(vault_crypto, storage_path=settings.transaction_store_path)
 
+    # Manager/agent split: agent registry (no vault_crypto dependency -- it
+    # stores agent PUBLIC keys only) + the manager's own agent-channel
+    # keypair, kept in Valkey under a name distinct from the vault master key.
+    agent_store = SqliteAgentStore(
+        storage_path=settings.agent_store_path,
+        heartbeat_interval_s=settings.agent_heartbeat_interval_s,
+        missed_beats_offline=settings.agent_missed_beats_offline,
+    )
+    manager_agent_key = load_or_create_manager_keypair(valkey_client, key_name=settings.agent_channel_key_name)
+
     orchestrator = Orchestrator(
         pii, policy_store, fallback_chain, audit_chain, DETECTOR_VERSIONS, PACK_VERSIONS,
         dynamic_router=dynamic_router, transaction_store=transaction_store,
@@ -183,6 +195,8 @@ async def lifespan(app: FastAPI):
     app.state.admin_account_store = admin_account_store
     app.state.user_account_store = user_account_store
     app.state.transaction_store = transaction_store
+    app.state.agent_store = agent_store
+    app.state.manager_agent_key = manager_agent_key
 
     yield
 
@@ -191,6 +205,7 @@ async def lifespan(app: FastAPI):
     provider_store.close()
     admin_account_store.close()
     user_account_store.close()
+    agent_store.close()
     await dynamic_router.aclose()
     if isinstance(provider, (OllamaProvider, OpenAICompatibleProvider)):
         await provider.aclose()
@@ -209,6 +224,7 @@ app = FastAPI(title="monoai-gateway-2.0", lifespan=lifespan)
 register_auth_exception_handlers(app)
 
 from api import admin as _admin_api  # noqa: E402
+from api import agents as _agents_api  # noqa: E402
 from api import auth as _auth_api  # noqa: E402
 from api import chat as _chat_api  # noqa: E402
 from api import evidence as _evidence_api  # noqa: E402
@@ -221,5 +237,6 @@ app.include_router(_health_api.router)
 app.include_router(_evidence_api.router)
 app.include_router(_files_api.router)
 app.include_router(_admin_api.router)
+app.include_router(_agents_api.router)
 app.include_router(_auth_api.router)
 app.include_router(_metrics_api.router)

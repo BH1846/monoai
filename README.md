@@ -103,9 +103,38 @@ gateway/
   orchestrator.py the 6-step request spine
   streaming.py   SSE sliding-window rehydrator
 policies/        default.yaml, finance_strict.yaml, gulf_sovereign.yaml (Phase 1 stub)
+agent/           standalone SENTINEL edge agent (Wazuh-style manager/agent split) — see agent/README.md
 tests/           unit/ integration/ adversarial/ e2e/
 scripts/         verify_audit_chain.py — standalone verifier to hand to auditors
 ```
+
+## Manager/agent split (Wazuh-style)
+
+The gateway doubles as the **manager**: enrollment authority, vault, policy
+authoring, the hash-chained audit log, and the admin dashboard all stay
+central. A lightweight **agent** (`agent/`, its own process, meant for OTHER
+hosts) enrolls once, then runs SENTINEL Tier 0/1 detection locally, buffers
+events when the manager is unreachable, replays them in order on reconnect,
+and pulls policy on an interval — see [`agent/README.md`](agent/README.md).
+
+Manager-side endpoints (in `gateway/api/agents.py`):
+
+```bash
+# Admin mints a one-time enrollment token (reuses MONOAI_ADMIN_KEY)
+curl -s -X POST http://127.0.0.1:8000/v1/admin/agents/enroll-token \
+  -H "Authorization: Bearer $MONOAI_ADMIN_KEY"
+# -> {"token": "et-...", "expires_at": ...}
+
+curl -s http://127.0.0.1:8000/v1/admin/agents -H "Authorization: Bearer $MONOAI_ADMIN_KEY"
+# -> {"agents": [{"agent_id": "agt_...", "status": "online", "policy_stale": false, ...}]}
+```
+
+`POST /v1/agent/enroll` (token + agent pubkey → agent_id + manager pubkey),
+`POST /v1/agent/ingest` (PyNaCl-`Box`-sealed events → the **existing**
+hash-chained audit log, tagged with `agent_id`), `GET /v1/agent/policy`, and
+`POST /v1/agent/heartbeat` are the agent-facing surface. The agent holds only
+its own private key + the manager's public key — never any vault/Valkey key
+material.
 
 ## Provider registry
 

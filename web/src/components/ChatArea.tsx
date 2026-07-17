@@ -237,22 +237,7 @@ export default function ChatArea({
 
         {/* Right side utilities */}
         <div className="flex items-center space-x-3.5 animate-fadeIn">
-          <div className="hidden sm:flex items-center space-x-2.5 px-3.5 py-1.5 bg-rose-500/10 rounded-[2px] border border-rose-500/25 shadow-sm">
-            <span className="w-1.5 h-1.5 rounded-full bg-rose-400 inline-block animate-pulse shadow-[0_0_8px_rgba(244,63,94,0.5)]"></span>
-            <span className="text-[9px] font-mono text-rose-300 uppercase tracking-widest font-bold flex items-center gap-1.5">
-              <span>Proxy Shield</span>
-              <span className="text-rose-500 font-normal">|</span>
-              <span className="text-white/85 font-semibold">RBAC ✓</span>
-              <span className="text-white/30">•</span>
-              <span className="text-white/85 font-semibold">PII ✓</span>
-              <span className="text-white/30">•</span>
-              <span className="text-white/85 font-semibold">Secrets ✓</span>
-              <span className="text-white/30">•</span>
-              <span className="text-white/85 font-semibold">Exploits ✓</span>
-            </span>
-          </div>
-
-          <button 
+          <button
             onClick={handleShare}
             className="flex items-center space-x-2 px-3 py-1.5 text-xs text-white/80 hover:text-white hover:bg-white/[0.04] border border-white/[0.08] hover:border-white/[0.15] rounded-[2px] transition-all font-semibold tracking-wide shadow-sm cursor-pointer"
           >

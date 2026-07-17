@@ -1,0 +1,24 @@
+[project]
+name = "monoai-agent"
+version = "0.1.0"
+description = "MonoAI SENTINEL agent — standalone edge process (Wazuh-style manager/agent split)"
+requires-python = ">=3.12"
+# Deliberately lean: the agent reuses monoai-core as a LIBRARY (detection
+# pipeline, policy engine, Box crypto) exactly the way filescan-worker and
+# mcp-firewall do. It needs NO gateway dependency, NO redis, NO server
+# framework -- it is an outbound-only daemon that talks HTTP to the manager.
+dependencies = [
+    "monoai-core",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+]
+
+[tool.uv.sources]
+monoai-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent_config.py", "identity.py", "buffer.py", "client.py", "enroll.py", "sentinel.py", "policy_cache.py", "runner.py"]

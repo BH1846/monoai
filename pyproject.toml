@@ -5,7 +5,7 @@ requires-python = ">=3.12"
 dependencies = []
 
 [tool.uv.workspace]
-members = ["core", "gateway", "filescan-worker", "mcp-firewall"]
+members = ["core", "gateway", "filescan-worker", "mcp-firewall", "agent"]
 
 [tool.uv.sources]
 monoai-core = { workspace = true }

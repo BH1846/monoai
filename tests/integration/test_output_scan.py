@@ -66,29 +66,28 @@ def test_model_leaked_email_is_tokenized_not_left_in_clear(tmp_path):
 
     assert "extra@example.com" not in processed
     assert len(output_token_ids) == 1
-    # A response containing a token, not the raw value -- exactly what G5 requires.
+    # A response containing a type-labeled token, not the raw value -- exactly
+    # what G5 requires. example.com isn't a common webmail domain, but the
+    # format is type-labeled + opaque regardless of value.
     (token_id,) = output_token_ids
-    assert f"PII_TOKEN_{token_id}" in processed
+    assert f"<EMAIL_PII_{token_id}>" in processed
 
 
 def test_existing_token_survives_real_onnx_output_scan(tmp_path):
     """Regression test for a real bug found during manual end-to-end
-    smoke-testing: the real ONNX NER model can misclassify
-    `[PII_TOKEN_xxxxxxxxxx]` bracket+hex-digit syntax as
-    NEARBYGPSCOORDINATE (-> ADDRESS), producing two overlapping spans
-    that each get independently re-tokenized -- corrupting a legitimate,
-    already-issued placeholder into a garbled
-    '[PII_TOKEN_aaa]_TOKEN_[PII_TOKEN_bbb]' mess. scan_output must treat
-    existing token ranges as protected from re-detection regardless of
-    what any detector (including the fuzzy NER one) thinks it found
-    there."""
+    smoke-testing: the real ONNX NER model can misclassify a token's own
+    syntax as a fresh entity, producing two overlapping spans that each get
+    independently re-tokenized -- corrupting a legitimate, already-issued
+    placeholder into a garbled nested mess. scan_output must treat existing
+    token ranges as protected from re-detection regardless of what any
+    detector (including the fuzzy NER one) thinks it found there."""
     pipeline = DetectionPipeline(use_onnx_ner=True)
     crypto = VaultCrypto(_FakeRedis())
     vault = SqliteVaultStore(crypto, storage_path=str(tmp_path / "vault.sqlite"))
     pii = PiiEngine(pipeline, vault, "test-server-secret")
     policy = _policy()
 
-    raw_model_output = "[simple] stub response to: Email me at [PII_TOKEN_78464d19db] about the invoice"
+    raw_model_output = "[simple] stub response to: Email me at <EMAIL_PII_78464d19db> about the invoice"
     processed, new_token_ids = pii.scan_output(raw_model_output, "session-onnx-guard", policy)
 
     assert processed == raw_model_output

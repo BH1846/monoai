@@ -23,20 +23,23 @@ from obs.metrics import FINDINGS_TOTAL, INJECTION_FLAGGED_TOTAL, INJECTION_JUDGE
 from obs.tracing import stage_span
 from policy.engine import evaluate
 from policy.schema import Policy
-from vault.session_tokens import TOKEN_PREFIX, derive_session_key, make_token_id
+from vault.session_tokens import TOKEN_RE, derive_session_key, format_token, make_token_id
 from vault.storage.base import VaultStore
 
-_TOKEN_RE = re.compile(r"\[" + re.escape(TOKEN_PREFIX) + r"([0-9a-f]{10})\]")
+# Single source of truth for the placeholder wire format lives in
+# session_tokens.py (shared with gateway/streaming.py).
+_TOKEN_RE = TOKEN_RE
 _CONTEXT_SUPPRESSED_MARKER = "[CONTEXT_SUPPRESSED]"
 
 # Ported from monoai_gateway/orchestrator.py: some models otherwise read
-# SENTINEL's own "preserve every PII_TOKEN placeholder" instruction plus a
+# SENTINEL's own "preserve every placeholder" instruction plus a
 # sensitive-sounding request as a cue to refuse. Kept short and only added
 # when at least one token was actually minted -- a longer notice on every
 # request would silently push simple prompts into higher difficulty tiers.
 _NON_SENSITIVE_TOKEN_NOTICE = (
-    "Note: PII_TOKEN is the real value. Answer directly and helpfully; "
-    "never ask for it or call the message incomplete."
+    "Note: placeholders like <EMAIL_PII_...> or <PERSON_PII_...> stand in for "
+    "real values. Answer directly and helpfully; preserve each placeholder "
+    "verbatim, and never ask for the real value or call the message incomplete."
 )
 
 
@@ -174,14 +177,13 @@ class PiiEngine:
         model output, before rehydration, so PII the model leaked (never
         present in the prompt) is caught too.
 
-        Existing `[PII_TOKEN_xxxxxxxxxx]` placeholders are protected from
-        re-detection: the ONNX NER model can misclassify bracket+hex-digit
-        syntax as NEARBYGPSCOORDINATE (-> ADDRESS) -- unlike the anchored
-        regex/secrets detectors, it's a fuzzy pattern matcher and can
-        false-positive on a token that merely looks GPS-coordinate-shaped.
-        Without this guard a single legitimate token could be split into
-        two overlapping spans and independently re-tokenized, corrupting
-        the placeholder.
+        Existing `<{LABEL}_PII_xxxxxxxxxx>` placeholders are protected from
+        re-detection: a detector can misclassify the token's own syntax as a
+        fresh entity -- unlike the anchored regex/secrets detectors, NER is a
+        fuzzy pattern matcher and can false-positive on a token that merely
+        looks entity-shaped. Without this guard a single legitimate token
+        could be split into two overlapping spans and independently
+        re-tokenized, corrupting the placeholder.
 
         `include_ner=False` (used by gateway/streaming.py's per-chunk
         scanning) skips the NER stage entirely: on tiny out-of-context
@@ -244,7 +246,7 @@ class PiiEngine:
                     out.append(f"[REDACTED_OUTPUT_{span.label.value}]")
                 elif d.action == Action.REVERSIBLE:
                     token_id = make_token_id(session_key, span.text)
-                    out.append(f"[{TOKEN_PREFIX}{token_id}]")
+                    out.append(format_token(token_id, span.label.value))
                     self._vault.write_async(session_id, token_id, span.text)
                     new_token_ids.add(token_id)
                 else:
@@ -312,12 +314,12 @@ class PiiEngine:
             final_text = _TOKEN_RE.sub(_sub, text)
 
             # Lenient fallback: models sometimes rewrite the placeholder rather
-            # than echoing it verbatim (e.g. "[PII_TOKEN_75abe732fa]" comes back
-            # as "[PII_NAME 75abe732fa]" or "(PII_TOKEN 75abe732fa)"), which the
+            # than echoing it verbatim (e.g. "<EMAIL_PII_75abe732fa>" comes back
+            # as "<EMAIL PII 75abe732fa>" or "(PERSON_PII 75abe732fa)"), which the
             # strict regex above misses -- leaking the token into the reply. The
-            # 10-hex token id is unique and preserved even when the prefix is
-            # mangled, so for any input token still findable by its id inside a
-            # bracket/paren, resolve it to the real value.
+            # 10-hex token id is unique and preserved even when the wrapper is
+            # mangled, so for any input token still findable by its id inside an
+            # angle-bracket/bracket/paren wrapper, resolve it to the real value.
             for token_id in input_token_ids:
                 if token_id in output_token_ids or token_id not in final_text:
                     continue
@@ -325,7 +327,7 @@ class PiiEngine:
                 if value is None:
                     continue
                 final_text = re.sub(
-                    r"[\[(][^\[\]()]*" + re.escape(token_id) + r"[^\[\]()]*[\])]",
+                    r"[<\[(][^<>\[\]()]*" + re.escape(token_id) + r"[^<>\[\]()]*[>\])]",
                     lambda _m, v=value: v,
                     final_text,
                 )
@@ -346,7 +348,7 @@ class PiiEngine:
                 out.append(text[last_end:span.start])
                 if d.action in (Action.REVERSIBLE, Action.BLOCK):
                     token_id = make_token_id(session_key, span.text)
-                    out.append(f"[{TOKEN_PREFIX}{token_id}]")
+                    out.append(format_token(token_id, span.label.value))
                     if d.action == Action.REVERSIBLE and vault_write:
                         self._vault.write_async(session_id, token_id, span.text)
                         minted.add(token_id)
