@@ -9,6 +9,9 @@ __pycache__/
 *.sqlite
 *.sqlite-journal
 *.jsonl
+# SENTINEL agent local state: holds the agent's X25519 PRIVATE key
+# (identity.json), its offline buffer, and cached policy. Never commit.
+agent_state/
 uv.lock.tmp
 *.egg-info/
 dist/
