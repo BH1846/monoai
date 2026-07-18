@@ -46,11 +46,15 @@ interface GuardrailDecision {
   details?: string[];
 }
 
-// Matches the [PII_TOKEN_xxxxxxxxxx] session-vault placeholder emitted by the
-// gateway's PII sanitizer (core/vault/session_tokens.py -- fixed prefix,
-// 10-char lowercase hex id). Presence in sanitized_prompt means a REVERSIBLE
-// redaction fired.
-const PII_TOKEN_RE = /\[PII_TOKEN_[0-9a-f]{10}\]/;
+// Matches the type-labeled session-vault placeholder emitted by the gateway's
+// PII sanitizer, e.g. <EMAIL_PII_5ba8e23a3f> / <PERSON_PII_7dac3827bb>
+// (core/vault/session_tokens.py's TOKEN_RE: <{LABEL}_PII_{10-hex}>, where the
+// label is uppercase + underscores). Presence in sanitized_prompt means a
+// REVERSIBLE redaction fired. NOTE: keep this in lockstep with the gateway's
+// token format -- it was previously the older [PII_TOKEN_xxxxxxxxxx] form, and
+// when the gateway moved to type-labeled tokens this regex silently stopped
+// matching, so the UI showed "Query Analyzer Passed" on redacted requests.
+const PII_TOKEN_RE = /<[A-Z][A-Z_]*_PII_[0-9a-f]{10}>/;
 
 function labelToGuardrailType(labels: string[]): GuardrailDecision["type"] {
   if (labels.includes("SECRET")) return "secret";

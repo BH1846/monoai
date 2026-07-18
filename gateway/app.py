@@ -39,6 +39,7 @@ from providers.ollama import OllamaProvider
 from providers.openai_compatible import CloudRoute, OpenAICompatibleProvider
 from providers.registry_store import SqliteProviderStore
 from providers.stub import StubProvider
+from transaction_forwarder import TransactionForwarder
 from vault.crypto import VaultCrypto
 from vault.storage.base import VaultStore
 from vault.storage.postgres_store import PostgresVaultStore
@@ -263,9 +264,32 @@ async def lifespan(app: FastAPI):
             interval_s=settings.provider_sync_interval_s,
         )
 
+    # Session federation. Origin side (forwards its users' sessions to the
+    # manager) is built when this gateway forwards; the manager side just needs
+    # a dedupe store, gated on the shared federation key like the other ingests.
+    transaction_forwarder = None
+    transaction_ingest_dedupe = None
+    if settings.audit_forward_admin_key:
+        transaction_ingest_dedupe = SqliteIngestDedupe(storage_path=settings.txn_ingest_dedupe_path)
+        if settings.key_forward_url:  # a forwarding instance -> also forward sessions
+            _txn_key = load_or_create_manager_keypair(valkey_client, key_name=settings.txn_forward_key_name)
+            transaction_forwarder = TransactionForwarder(
+                crypto=vault_crypto,
+                origin_private_key_hex=_txn_key.encode().hex(),
+                origin_public_key_hex=_txn_key.public_key.encode().hex(),
+                gateway_id=settings.gateway_id,
+                ingest_url=settings.txn_ingest_url,
+                pubkey_url=settings.federation_pubkey_url,
+                admin_key=settings.audit_forward_admin_key,
+                queue=SqliteForwardQueue(settings.txn_forward_queue_path),
+                interval_s=settings.audit_forward_interval_s,
+                timeout=settings.audit_forward_timeout_s,
+            )
+
     orchestrator = Orchestrator(
         pii, policy_store, fallback_chain, audit_chain, DETECTOR_VERSIONS, PACK_VERSIONS,
         dynamic_router=dynamic_router, transaction_store=transaction_store,
+        transaction_forwarder=transaction_forwarder,
     )
 
     app.state.settings = settings
@@ -292,6 +316,8 @@ async def lifespan(app: FastAPI):
     app.state.key_ingest_dedupe = key_ingest_dedupe
     app.state.key_revoke_ingest_dedupe = key_revoke_ingest_dedupe
     app.state.provider_sync = provider_sync
+    app.state.transaction_forwarder = transaction_forwarder
+    app.state.transaction_ingest_dedupe = transaction_ingest_dedupe
 
     yield
 
@@ -302,7 +328,8 @@ async def lifespan(app: FastAPI):
     user_account_store.close()
     agent_store.close()
     audit_ingest_dedupe.close()
-    for _closable in (key_forwarder, key_reverse_forwarder, key_ingest_dedupe, key_revoke_ingest_dedupe, provider_sync):
+    for _closable in (key_forwarder, key_reverse_forwarder, key_ingest_dedupe, key_revoke_ingest_dedupe,
+                      provider_sync, transaction_forwarder, transaction_ingest_dedupe):
         if _closable is not None:
             _closable.close()
     # Stops the forwarding worker thread + closes its queue/client. Sinks

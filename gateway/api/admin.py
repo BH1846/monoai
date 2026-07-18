@@ -5,6 +5,7 @@ only to admin operations, not the chat endpoint.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from contracts.audit import AuditRecord
@@ -12,6 +13,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from key_events import KeyForwardEvent, KeyRevokeEvent
 from key_forward_hook import forward_key_event as _forward_key_event
 from pydantic import ValidationError
+from vault.box import open_sealed as box_open
 from vault.box import seal as box_seal
 
 router = APIRouter()
@@ -148,6 +150,7 @@ async def list_transactions(
                 "redactedPrompt": t.redacted_prompt,
                 "llmReply": t.llm_reply,
                 "rehydratedReply": t.rehydrated_reply,
+                "originGateway": t.origin_gateway,
             }
             for t in txns
         ]
@@ -375,6 +378,73 @@ async def providers_sync(
         "providers": providers_out,
         "models": models_out,
     }
+
+
+@router.get("/v1/admin/federation/pubkey")
+async def federation_pubkey(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """This gateway's X25519 Box public key, so a forwarding peer can seal
+    session text to it before forwarding (see transaction_forwarder.py).
+    Admin-gated (shared federation key); the pubkey is not itself secret."""
+    _check_admin(authorization, request.app.state.settings.admin_key)
+    return {"pubkey": request.app.state.manager_agent_key.public_key.encode().hex()}
+
+
+@router.post("/v1/admin/transactions/ingest")
+async def ingest_transaction(
+    request: Request,
+    body: dict[str, Any],
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Receive a per-user chat session (prompt/reply) forwarded from a PEER
+    gateway and store it in THIS gateway's transaction_store, so the user's
+    session drill-down shows in the Users tab. Sibling of the audit/key ingest
+    endpoints; same shared-admin-key trust model + dedupe on request_id.
+
+    The raw text arrives Box-SEALED (only this gateway's private key can open
+    it -- it was never on the wire in plaintext); it is opened here and handed
+    to transaction_store.record(), which re-encrypts it under THIS gateway's
+    own VaultCrypto -- so a forwarded session is at-rest-encrypted exactly like
+    a locally-recorded one.
+    """
+    _check_admin(authorization, request.app.state.settings.admin_key)
+
+    store = getattr(request.app.state, "transaction_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="transaction store not configured on this gateway")
+
+    origin_gateway = body.get("origin_gateway")
+    origin_pubkey = body.get("origin_pubkey")
+    sealed = body.get("sealed_text")
+    request_id = body.get("request_id")
+    if not origin_gateway or not origin_pubkey or not sealed or not request_id:
+        raise HTTPException(status_code=400, detail="request_id, origin_gateway, origin_pubkey, sealed_text are required")
+
+    dedupe = getattr(request.app.state, "transaction_ingest_dedupe", None)
+    if dedupe is not None and dedupe.seen(request_id):
+        return {"accepted": False, "duplicate": True, "request_id": request_id}
+
+    manager_priv_hex = request.app.state.manager_agent_key.encode().hex()
+    try:
+        text_blob = box_open(manager_priv_hex, origin_pubkey, sealed["nonce"], sealed["ciphertext"])
+        text = json.loads(text_blob)
+    except Exception:
+        raise HTTPException(status_code=401, detail="sealed session text failed to open (authentication/decrypt)")
+
+    store.record(
+        request_id=request_id, session_id=body.get("session_id"), team_id=body.get("team_id"),
+        virtual_key_id=body.get("virtual_key_id"), model=body.get("model"), status=body.get("status", "clean"),
+        redaction_rules=body.get("redaction_rules") or [], input_tokens=body.get("input_tokens") or 0,
+        output_tokens=body.get("output_tokens") or 0, cost=body.get("cost"),
+        original_prompt=text.get("original_prompt", ""), redacted_prompt=text.get("redacted_prompt", ""),
+        llm_reply=text.get("llm_reply", ""), rehydrated_reply=text.get("rehydrated_reply", ""),
+        origin_gateway=origin_gateway, ts=body.get("ts"),
+    )
+    if dedupe is not None:
+        dedupe.mark(request_id, origin_gateway)
+    return {"accepted": True, "duplicate": False, "request_id": request_id, "origin_gateway": origin_gateway}
 
 
 @router.post("/v1/admin/policies/reload")

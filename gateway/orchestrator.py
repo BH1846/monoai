@@ -118,6 +118,7 @@ class Orchestrator:
         embedding_router: EmbeddingRouter | None = None,
         dynamic_router: DynamicProviderRouter | None = None,
         transaction_store: Any = None,
+        transaction_forwarder: Any = None,
     ) -> None:
         self._pii = pii
         self._policy_store = policy_store
@@ -132,6 +133,9 @@ class Orchestrator:
         # Optional per-request prompt/reply store (gateway/auth/transaction_store.py)
         # backing the admin Users-tab drill-down. None in tests / when unset.
         self._transaction_store = transaction_store
+        # Optional session-federation forwarder (gateway/transaction_forwarder.py):
+        # ships sessions (encrypted) to the manager. None unless configured.
+        self._transaction_forwarder = transaction_forwarder
 
     def _route_failure_record(
         self,
@@ -181,18 +185,30 @@ class Orchestrator:
         """Best-effort write to the per-user prompt/reply store. Never lets a
         store failure break the response path -- the transaction view is an
         admin convenience, not part of request correctness."""
-        if self._transaction_store is None:
-            return
-        try:
-            self._transaction_store.record(
+        if self._transaction_store is not None:
+            try:
+                self._transaction_store.record(
+                    request_id=request_id, session_id=session_id, team_id=team_id, virtual_key_id=virtual_key_id,
+                    model=model, status=status, redaction_rules=redaction_rules,
+                    input_tokens=input_tokens, output_tokens=output_tokens, cost=cost,
+                    original_prompt=original_prompt, redacted_prompt=redacted_prompt,
+                    llm_reply=llm_reply, rehydrated_reply=rehydrated_reply,
+                )
+            except Exception:  # noqa: BLE001 -- deliberately swallow; see docstring
+                pass
+
+        # Session federation: forward this session (encrypted) to the manager
+        # so a forwarded user's drill-down shows on the manager's Users tab.
+        # Non-blocking + best-effort: enqueue() does no network I/O and never
+        # raises, so a request is never slowed or broken by forwarding.
+        if self._transaction_forwarder is not None:
+            self._transaction_forwarder.enqueue(
                 request_id=request_id, session_id=session_id, team_id=team_id, virtual_key_id=virtual_key_id,
                 model=model, status=status, redaction_rules=redaction_rules,
                 input_tokens=input_tokens, output_tokens=output_tokens, cost=cost,
                 original_prompt=original_prompt, redacted_prompt=redacted_prompt,
                 llm_reply=llm_reply, rehydrated_reply=rehydrated_reply,
             )
-        except Exception:  # noqa: BLE001 -- deliberately swallow; see docstring
-            pass
 
     async def prepare_dispatch(
         self,

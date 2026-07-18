@@ -21,7 +21,6 @@ import time
 from dataclasses import dataclass
 
 from nacl.exceptions import CryptoError
-
 from vault.crypto import VaultCrypto
 
 _AAD_NAMESPACE = "user_transaction"
@@ -41,7 +40,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     cost            REAL,
     blob_nonce      BLOB NOT NULL,
     blob_ciphertext BLOB NOT NULL,
-    blob_sealed_dek BLOB NOT NULL
+    blob_sealed_dek BLOB NOT NULL,
+    origin_gateway  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tx_team ON transactions(team_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_tx_key ON transactions(virtual_key_id, ts DESC);
@@ -65,6 +65,11 @@ class Transaction:
     redacted_prompt: str
     llm_reply: str
     rehydrated_reply: str
+    # None = recorded on THIS gateway; set = forwarded in from a peer gateway
+    # (session federation). The raw text was Box-sealed in transit and is
+    # re-encrypted here under this gateway's own VaultCrypto, same as a local
+    # row -- so a forwarded session is at-rest-encrypted identically.
+    origin_gateway: str | None = None
 
 
 class SqliteTransactionStore:
@@ -78,6 +83,8 @@ class SqliteTransactionStore:
         cols = [r[1] for r in self._conn.execute("PRAGMA table_info(transactions)")]
         if "session_id" not in cols:
             self._conn.execute("ALTER TABLE transactions ADD COLUMN session_id TEXT")
+        if "origin_gateway" not in cols:
+            self._conn.execute("ALTER TABLE transactions ADD COLUMN origin_gateway TEXT")
         # Created after the migration above so it works on both fresh DBs and
         # ones upgraded from the pre-session_id schema.
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_session ON transactions(session_id, ts)")
@@ -100,6 +107,8 @@ class SqliteTransactionStore:
         redacted_prompt: str,
         llm_reply: str,
         rehydrated_reply: str,
+        origin_gateway: str | None = None,
+        ts: float | None = None,
     ) -> None:
         payload = json.dumps({
             "original_prompt": original_prompt,
@@ -111,12 +120,12 @@ class SqliteTransactionStore:
         self._conn.execute(
             "INSERT OR REPLACE INTO transactions "
             "(request_id, session_id, ts, team_id, virtual_key_id, model, status, redaction_rules, "
-            " input_tokens, output_tokens, cost, blob_nonce, blob_ciphertext, blob_sealed_dek) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " input_tokens, output_tokens, cost, blob_nonce, blob_ciphertext, blob_sealed_dek, origin_gateway) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                request_id, session_id, time.time(), team_id, virtual_key_id, model, status,
+                request_id, session_id, ts if ts is not None else time.time(), team_id, virtual_key_id, model, status,
                 json.dumps(redaction_rules), input_tokens, output_tokens, cost,
-                nonce, ciphertext, sealed_dek,
+                nonce, ciphertext, sealed_dek, origin_gateway,
             ),
         )
         self._conn.commit()
@@ -133,7 +142,7 @@ class SqliteTransactionStore:
             where, params = "WHERE team_id = ?", [team_id]
         rows = self._conn.execute(
             "SELECT request_id, session_id, ts, team_id, virtual_key_id, model, status, redaction_rules, "
-            "input_tokens, output_tokens, cost, blob_nonce, blob_ciphertext, blob_sealed_dek "
+            "input_tokens, output_tokens, cost, blob_nonce, blob_ciphertext, blob_sealed_dek, origin_gateway "
             f"FROM transactions {where} ORDER BY ts DESC LIMIT ?",
             (*params, limit),
         ).fetchall()
@@ -141,7 +150,7 @@ class SqliteTransactionStore:
         out: list[Transaction] = []
         for r in rows:
             (request_id, session_id, ts, team, vk, model, status, rules_json,
-             in_tok, out_tok, cost, nonce, ct, dek) = r
+             in_tok, out_tok, cost, nonce, ct, dek, origin_gateway) = r
             try:
                 blob = json.loads(self._crypto.decrypt(_AAD_NAMESPACE, request_id, nonce, ct, dek))
             except (CryptoError, ValueError):
@@ -157,6 +166,7 @@ class SqliteTransactionStore:
                 redacted_prompt=blob.get("redacted_prompt", ""),
                 llm_reply=blob.get("llm_reply", ""),
                 rehydrated_reply=blob.get("rehydrated_reply", ""),
+                origin_gateway=origin_gateway,
             ))
         return out
 

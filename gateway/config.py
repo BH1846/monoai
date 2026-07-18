@@ -147,6 +147,17 @@ class Settings:
     provider_sync_interval_s: float = field(default_factory=lambda: float(os.environ.get("MONOAI_PROVIDER_SYNC_INTERVAL_S", "60")))
     provider_sync_key_name: str = field(default_factory=lambda: os.environ.get("MONOAI_PROVIDER_SYNC_KEY_NAME", "monoai:provider_sync:instance_key"))
 
+    # -- session federation (forward per-user chat sessions instance -> manager) --
+    # A forwarding instance also ships its users' chat sessions (prompt/reply,
+    # encrypted at every hop) to the manager, so a forwarded user's session
+    # drill-down shows in the manager's Users tab. Enabled with the same
+    # audit-forwarding config; the ingest/pubkey URLs are DERIVED (no new URL
+    # var). The origin's X25519 Box keypair (for sealing session text to the
+    # manager) lives in Valkey under its own name.
+    txn_forward_queue_path: str = field(default_factory=lambda: os.environ.get("MONOAI_TXN_FORWARD_QUEUE_PATH", "./gateway_txn_forward_queue.sqlite"))
+    txn_ingest_dedupe_path: str = field(default_factory=lambda: os.environ.get("MONOAI_TXN_INGEST_DEDUPE_PATH", "./gateway_txn_ingest.sqlite"))
+    txn_forward_key_name: str = field(default_factory=lambda: os.environ.get("MONOAI_TXN_FORWARD_KEY_NAME", "monoai:txn_forward:instance_key"))
+
     @property
     def key_forward_url(self) -> str | None:
         """The manager's key-ingest URL, derived from the audit-forward URL so
@@ -161,11 +172,24 @@ class Settings:
     def provider_sync_url(self) -> str | None:
         """The manager's provider-sync URL, derived from the audit-forward URL
         (same manager). None on a non-forwarding gateway (nothing to pull)."""
+        return self._manager_url_with_path("/v1/admin/providers/sync")
+
+    @property
+    def txn_ingest_url(self) -> str | None:
+        """The manager's session-ingest URL, derived from the audit-forward URL."""
+        return self._manager_url_with_path("/v1/admin/transactions/ingest")
+
+    @property
+    def federation_pubkey_url(self) -> str | None:
+        """The manager's Box-pubkey URL, derived from the audit-forward URL."""
+        return self._manager_url_with_path("/v1/admin/federation/pubkey")
+
+    def _manager_url_with_path(self, path: str) -> str | None:
         if not self.audit_forward_url:
             return None
         from urllib.parse import urlsplit, urlunsplit
         parts = urlsplit(self.audit_forward_url)
-        return urlunsplit((parts.scheme, parts.netloc, "/v1/admin/providers/sync", "", ""))
+        return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
     # -- agent registry (Wazuh-style manager/agent split) --
     # The manager (this gateway) is the enrollment authority + audit sink for
