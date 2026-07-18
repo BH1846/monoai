@@ -9,6 +9,7 @@ from typing import Any
 
 from contracts.audit import AuditRecord
 from fastapi import APIRouter, Header, HTTPException, Request
+from key_events import KeyForwardEvent, KeyRevokeEvent
 from pydantic import ValidationError
 
 router = APIRouter()
@@ -19,6 +20,22 @@ def _check_admin(authorization: str | None, admin_key: str | None) -> None:
         raise HTTPException(status_code=403, detail="admin endpoints disabled (MONOAI_ADMIN_KEY not set)")
     if authorization != f"Bearer {admin_key}":
         raise HTTPException(status_code=401, detail="missing or invalid admin key")
+
+
+def _forward_key_event(request: Request, event_type: str, key_id: str, key: Any = None) -> None:
+    """Best-effort: enqueue a created/revoked event to the peer manager if key
+    forwarding is configured on this instance. Never raises -- the key op has
+    already committed locally."""
+    forwarder = getattr(request.app.state, "key_forwarder", None)
+    if forwarder is None:
+        return
+    settings = request.app.state.settings
+    event = KeyForwardEvent(
+        event_type=event_type, gateway_id=settings.gateway_id,
+        callback_url=getattr(settings, "gateway_callback_url", None),
+        key_id=key_id, key=key,
+    )
+    forwarder.enqueue(event.event_id, event.model_dump(mode="json"))
 
 
 @router.post("/v1/admin/keys")
@@ -37,6 +54,9 @@ async def create_key(
         rate_limit_rps=body.get("rate_limit_rps", 5.0),
         rate_limit_burst=body.get("rate_limit_burst", 20),
     )
+    # Forward the newly-created key to the manager (visibility in its Users
+    # tab). Never carries the raw key -- only the VirtualKey (hash, not secret).
+    _forward_key_event(request, "created", key.key_id, key=key)
     return {"key": raw_key, "key_id": key.key_id, "policy_id": key.policy_id, "team_id": key.team_id}
 
 
@@ -59,7 +79,38 @@ async def revoke_key(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     _check_admin(authorization, request.app.state.settings.admin_key)
-    request.app.state.key_store.revoke(key_id)
+    key_store = request.app.state.key_store
+
+    # Look up first so we can tell a locally-created key from one forwarded in
+    # from a peer -- they revoke differently.
+    key = key_store.get_by_id(key_id) if hasattr(key_store, "get_by_id") else None
+
+    if key is not None and key.origin_gateway is not None:
+        # A key that belongs to another gateway. Revoke our local (display)
+        # copy immediately (optimistic), then propagate the revoke BACK to the
+        # origin so it actually stops working there. Forwarding is one-way, so
+        # without this the origin would keep honouring the key.
+        key_store.revoke(key_id)
+        reverse = getattr(request.app.state, "key_reverse_forwarder", None)
+        if reverse is None or not key.origin_callback_url:
+            # Can't reach the origin (reverse forwarding not configured, or the
+            # origin never advertised a callback URL). The local copy is
+            # revoked, but the origin still honours the key -- report honestly.
+            return {
+                "revoked": key_id, "origin_gateway": key.origin_gateway,
+                "propagated": False,
+                "detail": "local copy revoked; could not reach origin gateway to propagate",
+            }
+        event = KeyRevokeEvent(key_id=key_id, gateway_id=request.app.state.settings.gateway_id)
+        payload = event.model_dump(mode="json")
+        payload["_target_url"] = key.origin_callback_url.rstrip("/") + "/v1/admin/keys/revoke-ingest"
+        reverse.enqueue(event.event_id, payload)
+        return {"revoked": key_id, "origin_gateway": key.origin_gateway, "propagated": True}
+
+    # A locally-created key: revoke it, and forward the revoke to the manager
+    # so its copy reflects the change too.
+    key_store.revoke(key_id)
+    _forward_key_event(request, "revoked", key_id)
     return {"revoked": key_id}
 
 
@@ -183,6 +234,85 @@ async def ingest_audit_record(
         "origin_gateway": appended.origin_gateway,
         "hash": appended.hash,
     }
+
+
+@router.post("/v1/admin/keys/ingest")
+async def ingest_key_event(
+    request: Request,
+    body: dict[str, Any],
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Receive a key created/revoked event forwarded from a PEER gateway and
+    reflect it into THIS gateway's own KeyStore, so the key shows up in the
+    Users tab alongside local ones (tagged origin_gateway). Sibling of
+    /v1/admin/audit/ingest; same shared-admin-key trust model + dedupe.
+
+    A forwarded key is visibility-only -- authenticate() (auth/middleware.py)
+    refuses any key with origin_gateway set, so mirroring a peer's key here
+    never makes it valid against this gateway.
+    """
+    _check_admin(authorization, request.app.state.settings.admin_key)
+
+    try:
+        event = KeyForwardEvent.model_validate(body)
+    except ValidationError as err:
+        raise HTTPException(status_code=400, detail=f"malformed key event: {err.error_count()} error(s)")
+
+    if not event.gateway_id:
+        raise HTTPException(status_code=400, detail="forwarded key event must carry gateway_id")
+
+    dedupe = getattr(request.app.state, "key_ingest_dedupe", None)
+    if dedupe is not None and dedupe.seen(event.event_id):
+        return {"accepted": False, "duplicate": True, "event_id": event.event_id}
+
+    key_store = request.app.state.key_store
+    if event.event_type == "created":
+        if event.key is None:
+            raise HTTPException(status_code=400, detail="created event must include the key body")
+        # Stamp provenance so this row is a foreign, visibility-only copy and
+        # is reverse-revocable back to its origin.
+        forwarded = event.key.model_copy(update={
+            "origin_gateway": event.gateway_id,
+            "origin_callback_url": event.callback_url,
+        })
+        key_store.add_forwarded_key(forwarded)
+    else:  # revoked
+        key_store.revoke(event.key_id)
+
+    if dedupe is not None:
+        dedupe.mark(event.event_id, event.gateway_id)
+    return {"accepted": True, "duplicate": False, "event_id": event.event_id, "origin_gateway": event.gateway_id}
+
+
+@router.post("/v1/admin/keys/revoke-ingest")
+async def revoke_ingest_key(
+    request: Request,
+    body: dict[str, Any],
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Receive a REVERSE revoke pushed by a manager (which revoked a key this
+    gateway had forwarded to it) and apply it to THIS gateway's own KeyStore,
+    so the key actually stops working here.
+
+    Deliberately does NOT re-forward the revoke -- that would loop back to the
+    manager, which already marked its own copy when it initiated the revoke.
+    Deduped on event_id (at-least-once delivery).
+    """
+    _check_admin(authorization, request.app.state.settings.admin_key)
+
+    try:
+        event = KeyRevokeEvent.model_validate(body)
+    except ValidationError as err:
+        raise HTTPException(status_code=400, detail=f"malformed revoke event: {err.error_count()} error(s)")
+
+    dedupe = getattr(request.app.state, "key_revoke_ingest_dedupe", None)
+    if dedupe is not None and dedupe.seen(event.event_id):
+        return {"accepted": False, "duplicate": True, "event_id": event.event_id}
+
+    request.app.state.key_store.revoke(event.key_id)  # no re-forward: breaks the loop
+    if dedupe is not None:
+        dedupe.mark(event.event_id, event.gateway_id)
+    return {"accepted": True, "duplicate": False, "event_id": event.event_id, "key_id": event.key_id}
 
 
 @router.post("/v1/admin/policies/reload")

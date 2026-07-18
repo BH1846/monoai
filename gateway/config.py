@@ -121,6 +121,32 @@ class Settings:
     # don't double-append (see gateway/audit_dedupe.py).
     audit_ingest_dedupe_path: str = field(default_factory=lambda: os.environ.get("MONOAI_AUDIT_INGEST_DEDUPE_PATH", "./gateway_audit_ingest.sqlite"))
 
+    # -- virtual-key federation (sibling of audit forwarding) --
+    # Reuses the audit-forwarding config: a gateway that forwards audit
+    # (MONOAI_AUDIT_FORWARD_URL set) also forwards its key create/revoke events
+    # to the same manager, so keys show in the manager's Users tab. The keys
+    # ingest URL is DERIVED from the audit one (see key_forward_url) -- no new
+    # user-facing URL var. MONOAI_GATEWAY_CALLBACK_URL is genuinely new: it is
+    # this gateway's own reachable base URL, advertised so a manager can push a
+    # revoke BACK here (reverse propagation). Unset -> this gateway's forwarded
+    # keys are visible on the manager but not remotely revocable.
+    gateway_callback_url: str | None = field(default_factory=lambda: os.environ.get("MONOAI_GATEWAY_CALLBACK_URL") or None)
+    # Internal state paths (not user-facing knobs; defaults are fine).
+    key_forward_queue_path: str = field(default_factory=lambda: os.environ.get("MONOAI_KEY_FORWARD_QUEUE_PATH", "./gateway_key_forward_queue.sqlite"))
+    key_reverse_queue_path: str = field(default_factory=lambda: os.environ.get("MONOAI_KEY_REVERSE_QUEUE_PATH", "./gateway_key_reverse_queue.sqlite"))
+    key_ingest_dedupe_path: str = field(default_factory=lambda: os.environ.get("MONOAI_KEY_INGEST_DEDUPE_PATH", "./gateway_key_ingest.sqlite"))
+    key_revoke_ingest_dedupe_path: str = field(default_factory=lambda: os.environ.get("MONOAI_KEY_REVOKE_INGEST_DEDUPE_PATH", "./gateway_key_revoke_ingest.sqlite"))
+
+    @property
+    def key_forward_url(self) -> str | None:
+        """The manager's key-ingest URL, derived from the audit-forward URL so
+        no separate env var is needed (both point at the same manager)."""
+        if not self.audit_forward_url:
+            return None
+        from urllib.parse import urlsplit, urlunsplit
+        parts = urlsplit(self.audit_forward_url)
+        return urlunsplit((parts.scheme, parts.netloc, "/v1/admin/keys/ingest", "", ""))
+
     # -- agent registry (Wazuh-style manager/agent split) --
     # The manager (this gateway) is the enrollment authority + audit sink for
     # remote SENTINEL agents. Its agent-channel keypair lives in Valkey under

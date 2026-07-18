@@ -24,6 +24,12 @@ def authenticate(authorization: str | None, key_store: KeyStore) -> VirtualKey:
     key = key_store.get_by_hash(key_hash)
     if key is None or not key.active:
         raise AuthenticationError()
+    # A key forwarded in from a peer gateway is visibility-only (it shows in
+    # this manager's Users tab) and must NOT authenticate here -- otherwise a
+    # peer's key would silently become valid against this gateway too. Access
+    # stays scoped to the gateway that created the key.
+    if key.origin_gateway is not None:
+        raise AuthenticationError()
     return key
 
 

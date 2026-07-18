@@ -27,6 +27,7 @@ from config import Settings, load_settings
 from detect.pipeline import DetectionPipeline
 from detect.stages.injection_judge import SemanticInjectionJudge
 from fastapi import FastAPI
+from key_forwarder import KeyEventForwarder
 from orchestrator import Orchestrator
 from pii import PiiEngine
 from policy.store import PolicyStore
@@ -210,6 +211,37 @@ async def lifespan(app: FastAPI):
     # from peer gateways so an at-least-once retry can't double-append.
     audit_ingest_dedupe = SqliteIngestDedupe(storage_path=settings.audit_ingest_dedupe_path)
 
+    # Virtual-key federation (sibling of audit forwarding). Gated on the shared
+    # federation admin key: a gateway with no MONOAI_AUDIT_FORWARD_ADMIN_KEY
+    # doesn't participate and gets none of this (no threads, no state files).
+    #   * key_forwarder         -- forward local create/revoke to the manager
+    #                              (only if this gateway forwards, i.e. a URL is set)
+    #   * key_reverse_forwarder -- push manager-side revokes back to origins
+    #                              (per-event target URL)
+    #   * the two dedupe stores -- idempotent receive for the two ingest routes
+    key_forwarder = None
+    key_reverse_forwarder = None
+    key_ingest_dedupe = None
+    key_revoke_ingest_dedupe = None
+    if settings.audit_forward_admin_key:
+        key_ingest_dedupe = SqliteIngestDedupe(storage_path=settings.key_ingest_dedupe_path)
+        key_revoke_ingest_dedupe = SqliteIngestDedupe(storage_path=settings.key_revoke_ingest_dedupe_path)
+        key_reverse_forwarder = KeyEventForwarder(
+            admin_key=settings.audit_forward_admin_key,
+            queue=SqliteForwardQueue(settings.key_reverse_queue_path),
+            default_url=None,  # reverse events carry a per-event _target_url
+            interval_s=settings.audit_forward_interval_s,
+            timeout=settings.audit_forward_timeout_s,
+        )
+        if settings.key_forward_url:  # only when this gateway actually forwards
+            key_forwarder = KeyEventForwarder(
+                admin_key=settings.audit_forward_admin_key,
+                queue=SqliteForwardQueue(settings.key_forward_queue_path),
+                default_url=settings.key_forward_url,
+                interval_s=settings.audit_forward_interval_s,
+                timeout=settings.audit_forward_timeout_s,
+            )
+
     orchestrator = Orchestrator(
         pii, policy_store, fallback_chain, audit_chain, DETECTOR_VERSIONS, PACK_VERSIONS,
         dynamic_router=dynamic_router, transaction_store=transaction_store,
@@ -234,6 +266,10 @@ async def lifespan(app: FastAPI):
     app.state.agent_store = agent_store
     app.state.manager_agent_key = manager_agent_key
     app.state.audit_ingest_dedupe = audit_ingest_dedupe
+    app.state.key_forwarder = key_forwarder
+    app.state.key_reverse_forwarder = key_reverse_forwarder
+    app.state.key_ingest_dedupe = key_ingest_dedupe
+    app.state.key_revoke_ingest_dedupe = key_revoke_ingest_dedupe
 
     yield
 
@@ -244,6 +280,9 @@ async def lifespan(app: FastAPI):
     user_account_store.close()
     agent_store.close()
     audit_ingest_dedupe.close()
+    for _closable in (key_forwarder, key_reverse_forwarder, key_ingest_dedupe, key_revoke_ingest_dedupe):
+        if _closable is not None:
+            _closable.close()
     # Stops the forwarding worker thread + closes its queue/client. Sinks
     # were previously never closed; that leaked WebhookSink's httpx client
     # and would now leave the forwarder thread running past shutdown.
