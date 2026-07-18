@@ -10,6 +10,7 @@ from typing import Any
 from contracts.audit import AuditRecord
 from fastapi import APIRouter, Header, HTTPException, Request
 from key_events import KeyForwardEvent, KeyRevokeEvent
+from key_forward_hook import forward_key_event as _forward_key_event
 from pydantic import ValidationError
 
 router = APIRouter()
@@ -20,22 +21,6 @@ def _check_admin(authorization: str | None, admin_key: str | None) -> None:
         raise HTTPException(status_code=403, detail="admin endpoints disabled (MONOAI_ADMIN_KEY not set)")
     if authorization != f"Bearer {admin_key}":
         raise HTTPException(status_code=401, detail="missing or invalid admin key")
-
-
-def _forward_key_event(request: Request, event_type: str, key_id: str, key: Any = None) -> None:
-    """Best-effort: enqueue a created/revoked event to the peer manager if key
-    forwarding is configured on this instance. Never raises -- the key op has
-    already committed locally."""
-    forwarder = getattr(request.app.state, "key_forwarder", None)
-    if forwarder is None:
-        return
-    settings = request.app.state.settings
-    event = KeyForwardEvent(
-        event_type=event_type, gateway_id=settings.gateway_id,
-        callback_url=getattr(settings, "gateway_callback_url", None),
-        key_id=key_id, key=key,
-    )
-    forwarder.enqueue(event.event_id, event.model_dump(mode="json"))
 
 
 @router.post("/v1/admin/keys")

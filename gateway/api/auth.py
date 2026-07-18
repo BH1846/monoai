@@ -11,6 +11,7 @@ from typing import Any
 
 from auth.user_account_store import EmailAlreadyRegisteredError
 from fastapi import APIRouter, HTTPException, Request
+from key_forward_hook import forward_key_event
 
 router = APIRouter()
 
@@ -73,6 +74,14 @@ async def register(request: Request, body: dict[str, Any]) -> dict[str, Any]:
         # revoke it from the Users tab) rather than left half-wired.
         key_store.revoke(key.key_id)
         raise HTTPException(status_code=409, detail="an account already exists for this email") from None
+
+    # Federate this self-serve key to the manager EXACTLY like an admin-created
+    # one (gateway/key_forward_hook.py -- same forwarder, same event, fail-open).
+    # Deliberately after register() succeeds, not right after create_key: an
+    # orphaned key from the race-loss branch above is never federated, so the
+    # manager only ever sees keys that became real accounts (and no compensating
+    # "revoked" event is needed for the orphan).
+    forward_key_event(request, "created", key.key_id, key=key)
 
     return {
         "email": account.email,
