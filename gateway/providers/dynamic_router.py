@@ -40,6 +40,20 @@ class DynamicProviderRouter:
         adapter.set_route(resolved.upstream_model, CloudRoute(model=resolved.upstream_model, api_key=resolved.api_key or ""))
         return Route(provider=adapter, model_id=resolved.upstream_model, provider_name=resolved.provider_name)
 
+    def invalidate(self) -> None:
+        """Drop all cached ProviderAdapters. Called after a provider-sync
+        reconcile so a synced provider whose base_url/key changed can't keep
+        being served from a stale cached adapter. The adapters are rebuilt
+        lazily on the next resolve_route(); the only cost is briefly losing
+        httpx-client reuse, which is fine on an infrequent config change.
+
+        NOTE: the old adapters' httpx clients are dropped without aclose()
+        (this is a sync method called from the sync thread). They are GC'd;
+        for the small provider counts here that's acceptable, and aclose()
+        on the full set still runs at shutdown via the fresh cache.
+        """
+        self._adapters = {}
+
     async def aclose(self) -> None:
         for adapter in self._adapters.values():
             await adapter.aclose()

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from key_events import KeyForwardEvent, KeyRevokeEvent
 from key_forward_hook import forward_key_event as _forward_key_event
 from pydantic import ValidationError
+from vault.box import seal as box_seal
 
 router = APIRouter()
 
@@ -21,6 +22,19 @@ def _check_admin(authorization: str | None, admin_key: str | None) -> None:
         raise HTTPException(status_code=403, detail="admin endpoints disabled (MONOAI_ADMIN_KEY not set)")
     if authorization != f"Bearer {admin_key}":
         raise HTTPException(status_code=401, detail="missing or invalid admin key")
+
+
+def _reject_if_provider_synced(request: Request) -> None:
+    """On a syncing instance the manager is the exclusive source of truth for
+    providers/models, so local add/delete is refused -- otherwise a local edit
+    would be silently wiped on the next sync. Configure providers on the
+    manager instead."""
+    if getattr(request.app.state, "provider_sync", None) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="providers/models are managed centrally on the manager (this instance syncs them); "
+                   "configure them on the manager gateway",
+        )
 
 
 @router.post("/v1/admin/keys")
@@ -300,6 +314,69 @@ async def revoke_ingest_key(
     return {"accepted": True, "duplicate": False, "event_id": event.event_id, "key_id": event.key_id}
 
 
+@router.post("/v1/admin/providers/sync")
+async def providers_sync(
+    request: Request,
+    body: dict[str, Any],
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Manager side of provider/model config sync (manager -> instance, the
+    OPPOSITE direction from audit/key forwarding). A forwarding instance PULLS
+    this gateway's provider/model registry; the manager is the single source
+    of truth (gateway/provider_sync.py is the client).
+
+    Trust model: the shared admin key, same as the ingest endpoints. The
+    caller supplies its X25519 Box public key; every provider API key is
+    DECRYPTED here (from this gateway's own VaultCrypto, which the caller
+    can't read) and RE-SEALED to the caller's pubkey with the existing
+    authenticated Box (core/vault/box.py) -- keys are never on the wire in
+    plaintext. Non-secret config (names, base_urls, model ids) travels as
+    plain JSON under the admin-key auth.
+    """
+    _check_admin(authorization, request.app.state.settings.admin_key)
+
+    instance_pubkey = (body or {}).get("pubkey")
+    if not instance_pubkey:
+        raise HTTPException(status_code=400, detail="pubkey (the requesting instance's X25519 Box public key) is required")
+    try:
+        bytes.fromhex(instance_pubkey)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="pubkey must be hex-encoded")
+
+    store = request.app.state.provider_store
+    manager_key = request.app.state.manager_agent_key
+    manager_priv_hex = manager_key.encode().hex()
+    manager_pubkey_hex = manager_key.public_key.encode().hex()
+
+    providers_out = []
+    for p in store.list_providers():
+        sealed = None
+        plaintext_key = store.get_decrypted_key(p.provider_id)
+        if plaintext_key:
+            nonce, ciphertext = box_seal(manager_priv_hex, instance_pubkey, plaintext_key)
+            sealed = {"nonce": nonce, "ciphertext": ciphertext}
+        providers_out.append({
+            "provider_id": p.provider_id, "name": p.name, "kind": p.kind, "base_url": p.base_url,
+            "enabled": p.enabled, "created_at": p.created_at, "key_last4": p.key_last4,
+            "sealed_api_key": sealed,
+        })
+
+    models_out = [
+        {
+            "model_id": m.model_id, "provider_id": m.provider_id, "upstream_model": m.upstream_model,
+            "display_name": m.display_name, "enabled": m.enabled, "created_at": m.created_at,
+        }
+        for m in store.list_models()
+    ]
+
+    return {
+        "manager_gateway_id": request.app.state.settings.gateway_id,
+        "manager_pubkey": manager_pubkey_hex,
+        "providers": providers_out,
+        "models": models_out,
+    }
+
+
 @router.post("/v1/admin/policies/reload")
 async def reload_policies(
     request: Request,
@@ -357,6 +434,7 @@ async def create_provider(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     _check_admin(authorization, request.app.state.settings.admin_key)
+    _reject_if_provider_synced(request)
     name = body.get("name")
     kind = body.get("kind")
     base_url = body.get("base_url")
@@ -385,7 +463,7 @@ async def list_providers(
         "providers": [
             {
                 "provider_id": p.provider_id, "name": p.name, "kind": p.kind, "base_url": p.base_url,
-                "key_last4": p.key_last4, "enabled": p.enabled,
+                "key_last4": p.key_last4, "enabled": p.enabled, "origin_gateway": p.origin_gateway,
             }
             for p in providers
         ]
@@ -399,6 +477,7 @@ async def delete_provider(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     _check_admin(authorization, request.app.state.settings.admin_key)
+    _reject_if_provider_synced(request)
     if not request.app.state.provider_store.delete_provider(provider_id):
         raise HTTPException(status_code=404, detail="unknown provider_id")
     return {"deleted": provider_id}
@@ -411,6 +490,7 @@ async def create_model(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     _check_admin(authorization, request.app.state.settings.admin_key)
+    _reject_if_provider_synced(request)
     store = request.app.state.provider_store
     model_id = body.get("model_id")
     provider_id = body.get("provider_id")
@@ -441,6 +521,7 @@ async def list_models(
             {
                 "model_id": m.model_id, "provider_id": m.provider_id, "provider_name": m.provider_name,
                 "upstream_model": m.upstream_model, "display_name": m.display_name, "enabled": m.enabled,
+                "origin_gateway": m.origin_gateway,
             }
             for m in models
         ]
@@ -454,6 +535,7 @@ async def delete_model(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     _check_admin(authorization, request.app.state.settings.admin_key)
+    _reject_if_provider_synced(request)
     if not request.app.state.provider_store.delete_model(model_id):
         raise HTTPException(status_code=404, detail="unknown model_id")
     return {"deleted": model_id}

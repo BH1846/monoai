@@ -137,6 +137,16 @@ class Settings:
     key_ingest_dedupe_path: str = field(default_factory=lambda: os.environ.get("MONOAI_KEY_INGEST_DEDUPE_PATH", "./gateway_key_ingest.sqlite"))
     key_revoke_ingest_dedupe_path: str = field(default_factory=lambda: os.environ.get("MONOAI_KEY_REVOKE_INGEST_DEDUPE_PATH", "./gateway_key_revoke_ingest.sqlite"))
 
+    # -- provider/model config sync (manager -> instance; the DOWNWARD flow) --
+    # A forwarding instance PULLS the manager's provider/model registry (the
+    # manager is the single source of truth). Reuses the audit-forwarding
+    # config: enabled when MONOAI_AUDIT_FORWARD_URL + admin key are set; the
+    # sync URL is DERIVED (see provider_sync_url) -- no new URL var. The
+    # instance's X25519 Box keypair (for receiving sealed API keys) lives in
+    # Valkey under its own name.
+    provider_sync_interval_s: float = field(default_factory=lambda: float(os.environ.get("MONOAI_PROVIDER_SYNC_INTERVAL_S", "60")))
+    provider_sync_key_name: str = field(default_factory=lambda: os.environ.get("MONOAI_PROVIDER_SYNC_KEY_NAME", "monoai:provider_sync:instance_key"))
+
     @property
     def key_forward_url(self) -> str | None:
         """The manager's key-ingest URL, derived from the audit-forward URL so
@@ -146,6 +156,16 @@ class Settings:
         from urllib.parse import urlsplit, urlunsplit
         parts = urlsplit(self.audit_forward_url)
         return urlunsplit((parts.scheme, parts.netloc, "/v1/admin/keys/ingest", "", ""))
+
+    @property
+    def provider_sync_url(self) -> str | None:
+        """The manager's provider-sync URL, derived from the audit-forward URL
+        (same manager). None on a non-forwarding gateway (nothing to pull)."""
+        if not self.audit_forward_url:
+            return None
+        from urllib.parse import urlsplit, urlunsplit
+        parts = urlsplit(self.audit_forward_url)
+        return urlunsplit((parts.scheme, parts.netloc, "/v1/admin/providers/sync", "", ""))
 
     # -- agent registry (Wazuh-style manager/agent split) --
     # The manager (this gateway) is the enrollment authority + audit sink for

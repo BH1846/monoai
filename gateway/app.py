@@ -31,6 +31,7 @@ from key_forwarder import KeyEventForwarder
 from orchestrator import Orchestrator
 from pii import PiiEngine
 from policy.store import PolicyStore
+from provider_sync import ProviderSyncClient
 from providers.base import ProviderAdapter
 from providers.dynamic_router import DynamicProviderRouter
 from providers.fallback_chain import FallbackChain, Route
@@ -242,6 +243,26 @@ async def lifespan(app: FastAPI):
                 timeout=settings.audit_forward_timeout_s,
             )
 
+    # Provider/model config sync (manager -> instance, the DOWNWARD flow). A
+    # forwarding instance PULLS the manager's registry; its presence also flips
+    # the local provider/model admin routes to read-only (manager-exclusive).
+    # The instance's Box keypair (for receiving sealed API keys) is a distinct
+    # Valkey key, reusing the same X25519 load-or-create helper as the agent
+    # channel.
+    provider_sync = None
+    if settings.provider_sync_url and settings.audit_forward_admin_key:
+        _sync_key = load_or_create_manager_keypair(valkey_client, key_name=settings.provider_sync_key_name)
+        provider_sync = ProviderSyncClient(
+            sync_url=settings.provider_sync_url,
+            admin_key=settings.audit_forward_admin_key,
+            instance_private_key_hex=_sync_key.encode().hex(),
+            instance_public_key_hex=_sync_key.public_key.encode().hex(),
+            gateway_id=settings.gateway_id,
+            store=provider_store,
+            dynamic_router=dynamic_router,
+            interval_s=settings.provider_sync_interval_s,
+        )
+
     orchestrator = Orchestrator(
         pii, policy_store, fallback_chain, audit_chain, DETECTOR_VERSIONS, PACK_VERSIONS,
         dynamic_router=dynamic_router, transaction_store=transaction_store,
@@ -270,6 +291,7 @@ async def lifespan(app: FastAPI):
     app.state.key_reverse_forwarder = key_reverse_forwarder
     app.state.key_ingest_dedupe = key_ingest_dedupe
     app.state.key_revoke_ingest_dedupe = key_revoke_ingest_dedupe
+    app.state.provider_sync = provider_sync
 
     yield
 
@@ -280,7 +302,7 @@ async def lifespan(app: FastAPI):
     user_account_store.close()
     agent_store.close()
     audit_ingest_dedupe.close()
-    for _closable in (key_forwarder, key_reverse_forwarder, key_ingest_dedupe, key_revoke_ingest_dedupe):
+    for _closable in (key_forwarder, key_reverse_forwarder, key_ingest_dedupe, key_revoke_ingest_dedupe, provider_sync):
         if _closable is not None:
             _closable.close()
     # Stops the forwarding worker thread + closes its queue/client. Sinks
